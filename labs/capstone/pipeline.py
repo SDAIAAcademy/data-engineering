@@ -190,6 +190,7 @@ defs = dg.Definitions(
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(errors="replace")  # Windows consoles with an Arabic code page can't print the ⚠️ below
     U.ensure_data()
     result = dg.materialize(
         [*app_assets, *file_assets, qafila_dbt, gold_daily_city_sales, payments_contract, orders_volume],
