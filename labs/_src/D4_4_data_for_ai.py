@@ -188,7 +188,7 @@ for q in ["حليب للفطور", "something to clean the dishes", "قهوة ع
     top = search(q, 3)
     print(f"{q!r:34} -> {top.category.tolist()}")
 U.check(search("حليب للفطور", 3).category.iloc[0] == "Dairy", "Arabic query finds dairy")
-U.check(search("something to clean the dishes", 3).category.iloc[0] == "Household", "English query finds dish soap")
+U.check(search("something to clean the dishes", 3).category.iloc[0] == "Household", "English query finds the household aisle")
 
 # %% [markdown]
 # 🔍 At catalog scale, add an index (DuckDB's `vss` extension builds HNSW; Postgres has `pgvector`; LanceDB, Qdrant and
