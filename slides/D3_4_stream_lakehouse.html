@@ -1,7 +1,552 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D3_4 · Streams into the lakehouse · Modern Data Engineering</title>
-<link rel="icon" href="../assets/img/academy.svg"><link rel="stylesheet" href="../assets/story/story.css"></head>
-<body><main id="stage" aria-label="Streams into the lakehouse presentation"></main>
-<nav id="toolbar" aria-label="Presentation controls"><button id="previous" aria-label="Previous slide" title="Previous slide">←</button><button id="notes" aria-label="Show speaker notes" aria-expanded="false" title="Speaker notes (N)">N</button><button id="overview" aria-label="Slide overview" title="Overview (O)">▦</button><button id="fullscreen" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button><button id="next" aria-label="Next slide" title="Next slide">→</button></nav>
-<aside id="notes-panel" aria-label="Speaker notes"></aside><div id="live-status" aria-live="polite" aria-atomic="true"></div><script src="../assets/story/story.js"></script><script src="../assets/story/D3_4_stream_lakehouse.js"></script></body></html>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 3">
+
+<section class="slide title" data-label="Streams into the lakehouse">
+  <div class="kicker">Modern Data Engineering · Day 3</div>
+  <h1>Streams into the lakehouse</h1>
+  <p class="lead mt">Khalid's four events, one commit, a table you can query.</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>Day 3 · Session 4</span>
+    <span>Khalid's order 5043883</span>
+    <span>about 25 minutes, then Lab 3.4</span>
+  </div>
+  <aside class="notes">About 25 minutes for the deck, then Demo 3.4 sections 2 and 6 live if there is time, then Lab 3.4 (25 minutes). This session joins the last two: the courier events from D3_3 and the Iceberg tables from D3_1. Khalid's order 5043883 runs through the deck again: his four courier events arrive in one 30-minute batch and become one commit of the table. The hard part is the seam between the stream and the table: saving the data and the stream position together, and the small files a stream leaves behind. Some slides are builds: the heading stays and one piece arrives per key press. Every number comes from the course data and Lab 3.4.<p class="small">Sources: <a href="D3_3_streaming.html">D3_3_streaming.html</a> · <a href="00_intro.html">00_intro.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="00 / You are here">
+  <div class="kicker">00 / You are here</div>
+  <h2>A stream that lands in a table</h2>
+  <p class="lead small">Streaming: courier events, as they arrive. Iceberg: the table they land in.</p>
+  <div class="pmap" style="grid-auto-rows:38px;margin-top:8px" data-here="streaming,iceberg" data-met="dlt,duckdb,cdc,parquet,polars,semantic,dbt,ai,spark,pandera,contracts,dagster,observe,govern"></div>
+  <div class="callout tip mt-s"><b>The seam is the hard part:</b> the stream never stops, and the table must stay correct and fast.</div>
+  <aside class="notes">Two stages you know, joined: the events from D3_3 land in the Iceberg tables from D3_1. The course map with two pieces lit. D3_3 read the events from a log; D3_1 built Iceberg tables with snapshots, partitions and time travel. Today the stream writes into such a table. Everything downstream (dbt, the semantic layer, dashboards) then reads one table instead of a log.</aside>
+</section>
+
+<section class="slide" data-label="01 / The question">
+  <div class="kicker">01 / The question</div>
+  <h2>Which store keeps missing 30 minutes?</h2>
+  <p class="lead small">Operations asks. Not one order on the road, as in D3_3: every order of the week, per store.</p>
+  <div class="cols cols-2 gap-s mt-s">
+    <div class="card c-teal"><p class="small mb0"><b>Operations:</b> "Which store keeps missing the promise?"</p></div>
+    <div class="callout note small mb0"><b>Khalid's order:</b> placed 01:35:37, delivered 01:54:55. Now do that for 3,157 orders.</div>
+  </div>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="rec c-purple"><b>when each order was delivered</b><span>the delivered events · from the stream</span></div>
+    <div class="rec c-teal"><b>when each order was placed</b><span>created_at · app.orders</span></div>
+    <div class="rec c-amber"><b>every store, four days</b><span>a join and a GROUP BY</span></div>
+  </div>
+  <div class="callout tip small mt-s"><b>The answer joins two sources</b> over many days: a query, not a reader of a log.</div>
+  <div class="cols cols-2 gap-s mt-s">
+    <div class="card flat c-coral frag"><p class="small mb0"><b>The log can't answer it</b> · read one event at a time, in arrival order · kept for days · no joins</p></div>
+    <div class="card flat c-teal frag"><p class="small mb0"><b>A table can</b> · SQL and joins from any engine · history kept as long as you like</p></div>
+  </div>
+  <div class="callout tip small mt-s frag"><b>Land the stream in a table:</b> the stream keeps it fresh, the table makes it queryable.</div>
+  <aside class="notes">A build: one key press adds the second half. The promise from the introduction is 30 minutes from order to door. To find the store that misses it, operations needs each order's delivered event (from the courier stream) and its order time (from the app database), for every order of the week. Khalid's order is one row of that answer: placed at 01:35:37, delivered at 01:54:55. 3,157 orders were delivered between 24 and 27 September (UTC days). Then press: Kafka is built to hand events to readers in order, not to answer questions: no joins with the app's orders, no GROUP BY, and it keeps events for days. An Iceberg table is what D3_1 built: SQL from DuckDB, Spark or Polars, snapshots and time travel. So the stream job's output is a table: bronze.delivery_events, one row per event.<p class="small">Sources: <a href="00_intro.html">00_intro.html</a> · <a href="D3_3_streaming.html">D3_3_streaming.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / Micro-batches">
+  <div class="kicker">02 / Micro-batches</div>
+  <h2>Every 30 minutes, append what arrived</h2>
+  <p class="lead small">The stream job takes everything that arrived in the last 30 minutes and adds it to the table.</p>
+  <p class="kicker" style="margin-bottom:8px">batch 177 · arrived 01:30–02:00 · offsets 13488–13499</p>
+  <div class="evts">
+    <div class="evt"><b>…774</b><span>assigned</span><small>13488 · 01:32</small></div>
+    <div class="evt" style="border-color:var(--teal)"><b>…883</b><span>assigned</span><small>13489 · 01:36</small></div>
+    <div class="evt"><b>…774</b><span>picked up</span><small>13490 · 01:36</small></div>
+    <div class="evt"><b>…939</b><span>delivered</span><small>13491 · 01:37</small></div>
+    <div class="evt"><b>…774</b><span>on the way</span><small>13492 · 01:37</small></div>
+    <div class="evt"><b>…590</b><span>delivered</span><small>13493 · 01:38</small></div>
+    <div class="evt" style="border-color:var(--teal)"><b>…883</b><span>picked up</span><small>13494 · 01:46</small></div>
+    <div class="evt" style="border-color:var(--teal)"><b>…883</b><span>on the way</span><small>13495 · 01:48</small></div>
+    <div class="evt"><b>…774</b><span>failed</span><small>13496 · 01:49</small></div>
+    <div class="evt"><b>…775</b><span>assigned</span><small>13497 · 01:50</small></div>
+    <div class="evt" style="border-color:var(--teal)"><b>…883</b><span>delivered</span><small>13498 · 01:54</small></div>
+    <div class="evt"><b>…775</b><span>picked up</span><small>13499 · 01:59</small></div>
+  </div>
+  <div class="flow mt">
+    <div class="step c-amber"><b>Stream job</b>every 30 minutes: take what arrived, append it</div>
+    <div class="arrow">→</div>
+    <div class="step c-navy"><b>bronze.delivery_events</b>an Iceberg table, partitioned by day</div>
+  </div>
+  <p class="small muted mt-s">4 days of the stream: 179 batches, 1 to 208 events each.</p>
+  <div class="callout tip mt-s"><b>Micro-batch:</b> a small batch of whatever arrived in one interval. The stream becomes a series of small appends.</div>
+  <aside class="notes">The real batch 177 of Lab 3.4: the 12 events that arrived between 01:30 and 02:00 on 28 September, at log offsets 13488 to 13499 (D3_3 showed most of them). Khalid's four events (outlined in teal) are all in it, with eight events of four other orders. Spark Structured Streaming works exactly like this (a trigger every 30 minutes); Flink commits on its checkpoints, typically every minute or so. A shorter interval means fresher data: keep that thought for the small-files slides.<p class="small">Sources: <a href="https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html">spark</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / One commit">
+  <div class="kicker">02 / One commit</div>
+  <h2>Each batch is one commit</h2>
+  <p class="lead small">Batch 177 becomes snapshot 177 of the table: the same idea as every write in D3_1.</p>
+  <div class="flow mt">
+    <div class="step c-amber"><b>batch 177</b>12 events · offsets 13488–13499</div>
+    <div class="arrow">→</div>
+    <div class="step c-navy"><b>bronze.delivery_events</b>one commit</div>
+  </div>
+  <div class="cols cols-3 gap-s mt">
+    <div class="rec"><b>snapshot 176</b><span>01:00–01:30 · 13 rows</span></div>
+    <div class="rec good"><b>snapshot 177</b><span>01:30–02:00 · 12 rows</span></div>
+    <div class="rec"><b>snapshot 178</b><span>02:00–02:30 · 3 rows</span></div>
+  </div>
+  <div class="cols cols-2 gap-s mt">
+    <div class="callout note"><b>One batch = one commit = one snapshot.</b></div>
+    <div class="callout note"><b>Readers see all 12 rows of 177, or none of them.</b></div>
+  </div>
+  <div class="callout tip mt-s"><b>Every micro-batch is an atomic commit:</b> a new snapshot that holds the whole batch.</div>
+  <aside class="notes">Recall D3_1: every write to an Iceberg table adds files and atomically switches the table to a new snapshot. A reader that runs during the commit sees snapshot 176 or snapshot 177, never half of batch 177. Over the 4 days the job makes 179 commits: 179 snapshots. The snapshot numbers on the slide are positions in the table's history; Iceberg's own snapshot ids are long random numbers.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Where did it stop?">
+  <div class="kicker">03 / Where did it stop?</div>
+  <h2>The job must remember where it stopped</h2>
+  <p class="lead small">The offset from D3_3: the next position in the log to read. A first design saves it in a file after each commit.</p>
+  <div class="cols cols-2 gap-s mt">
+    <div class="card c-teal">
+      <h4>1 · commit batch 177 to the table</h4>
+      <div class="stack dense">
+        <div class="rec"><b>snapshot 176</b><span>01:00–01:30 · 13 rows</span></div>
+        <div class="rec good"><b>snapshot 177</b><span>01:30–02:00 · 12 rows</span></div>
+      </div>
+    </div>
+    <div class="card c-coral">
+      <h4>2 · save the next offset: 13500</h4>
+      <div class="rec bad"><b>checkpoint.json</b><span>a separate file: the next offset to read</span><i>13500</i></div>
+    </div>
+  </div>
+  <div class="callout tip mt"><b>Offset:</b> the job's place in the log. After batch 177 (offsets 13488–13499), the next offset is 13500.</div>
+  <aside class="notes">This is the naive sink of Demo 3.4 section 2. After each batch the job does two writes: first the data (a commit to Iceberg), then the progress (offset 13500 into checkpoint.json). On restart it reads the file and continues from there. Before batch 177 the file said 13488. Each write is correct on its own. Ask the room what could go wrong.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Where did it stop?">
+  <div class="kicker">03 / Where did it stop?</div>
+  <h2>It crashes between step 1 and step 2. Where does it restart?</h2>
+  <div class="quiz">
+    <p class="lead">Batch 177 is in the table. checkpoint.json still says 13488. Predict first: which number does the restart read?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">At 13500: the table already has batch 177</div>
+      <div class="opt" data-k="B" data-ok>At 13488: batch 177 is appended a second time</div>
+      <div class="opt" data-k="C">Iceberg rolls the commit back, so nothing repeats</div>
+    </div>
+    <div class="callout tip why"><b>Yes.</b> The file still says 13488, so batch 177 is read and appended again. A would need the job to look at the table, which this design does not do. C: the commit had finished, and Iceberg never undoes a finished commit. A restart trusts the saved offset, whatever the table already holds.</div>
+  </div>
+  <aside class="notes">Allow 45 seconds and let learners commit. B is right: the job reads 13488 from the file and processes batch 177 again; the table has no idea it is the same batch, so it appends it as a new snapshot. C is the common misconception: the commit had finished, and Iceberg never undoes a finished commit. A would need the job to look at the table, which this design doesn't do. Demo 3.4 section 2 runs this crash live (at batch 30 over two days).<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Where did it stop?">
+  <div class="kicker">03 / Where did it stop?</div>
+  <h2>Khalid's order is now in the table twice</h2>
+  <p class="lead small">The restart read 13488 and appended batch 177 again, as a new snapshot.</p>
+  <div class="cols cols-2 gap-s mt-s">
+    <div class="stack dense">
+      <div class="rec"><b>snapshot 176</b><span>01:00–01:30 · 13 rows</span></div>
+      <div class="rec"><b>snapshot 177</b><span>01:30–02:00 · 12 rows</span></div>
+      <div class="rec bad"><b>snapshot 178</b><span>batch 177 again · 12 rows</span></div>
+    </div>
+    <div class="stack dense">
+      <div><span class="pill c-navy">snapshot 177</span>
+        <div class="evts mt-s"><div class="evt"><b>…883</b><span>assigned</span></div><div class="evt"><b>…883</b><span>picked up</span></div><div class="evt"><b>…883</b><span>on the way</span></div><div class="evt"><b>…883</b><span>delivered</span></div></div></div>
+      <div><span class="pill c-coral">snapshot 178</span>
+        <div class="evts mt-s"><div class="evt bad"><b>…883</b><span>assigned</span></div><div class="evt bad"><b>…883</b><span>picked up</span></div><div class="evt bad"><b>…883</b><span>on the way</span></div><div class="evt bad"><b>…883</b><span>delivered</span></div></div></div>
+    </div>
+  </div>
+  <div class="cols cols-3 mid mt-s">
+    <div class="stat center"><div class="big">13,518</div><div class="lbl">rows in the table</div></div>
+    <div class="stat center"><div class="big">13,506</div><div class="lbl">events in the stream</div></div>
+    <div class="stat center"><div class="big" style="color:var(--coral)">12 extra</div><div class="lbl">batch 177, twice: Khalid delivered twice</div></div>
+  </div>
+  <div class="callout warn mt-s"><b>Two separate writes leave a gap.</b> A crash in the gap replays the batch: duplicates.</div>
+  <aside class="notes">Real numbers from replaying the 4 days with this naive job and a crash right after batch 177's commit: 13,518 rows for 13,506 events, exactly 12 too many, and order 5043883 has 8 rows for its 4 events. The SLA query would now count Khalid's delivery twice. Making the file write faster doesn't help: the gap is still there. Saving the offset first doesn't help either: then a crash loses the batch (at-most-once, D3_3).<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a> · <a href="D3_3_streaming.html">D3_3_streaming.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="04 / The fix">
+  <div class="kicker">04 / The fix</div>
+  <h2>Put the offset inside the commit</h2>
+  <p class="lead small">An Iceberg snapshot carries a summary of free-form properties. One commit can hold the data and the progress.</p>
+  <div class="cols cols-2 gap-s">
+    <div>
+      <h4>Two writes · a gap between them</h4>
+      <div class="stack dense">
+        <div class="rec"><b>1 · commit to the table</b><span>snapshot 177 · 12 rows</span></div>
+        <p class="small mb0" style="color:var(--coral)"><b>a crash here</b></p>
+        <div class="rec"><b>2 · write checkpoint.json</b><span>offset 13500</span></div>
+      </div>
+      <div class="callout warn small mt-s"><b>The data is saved, the offset isn't:</b> the batch is replayed.</div>
+    </div>
+    <div>
+      <h4>One commit · no gap</h4>
+      <table class="t small">
+        <tr><th colspan="2">snapshot 177 · one commit</th></tr>
+        <tr><th>in the commit</th><th>value</th></tr>
+        <tr><td>12 data rows</td><td>Khalid's 4 events + 8 others</td></tr>
+        <tr><td><code>qafila.offset</code></td><td><code>13500</code></td></tr>
+        <tr><td><code>qafila.batch_end</code></td><td><code>2026-09-27T23:00:00+00:00</code></td></tr>
+      </table>
+      <div class="callout tip small mt-s"><b>Both are saved, or neither is.</b></div>
+    </div>
+  </div>
+  <pre class="code s mt-s"><code class="language-python">tbl.append(rows, snapshot_properties={"qafila.offset": "13500"})</code></pre>
+  <div class="callout tip mt-s"><b>Exactly once into a table:</b> commit the data and the offset together, in one atomic commit.</div>
+  <aside class="notes">Wrong and right on one slide. The left is the naive job. The right is what Lab 3.4 task 1 builds: append the batch with snapshot_properties, so the offset (and the batch's end time, 23:00 UTC = 02:00 Riyadh) are part of snapshot 177's summary. A commit is atomic, so there is no moment where the data exists without the offset. Spark does the same with its checkpoint folder tied to the Iceberg or Delta commit id; Flink uses a two-phase commit. Different code, same idea.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a> · <a href="https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html">spark</a></p></aside>
+</section>
+
+<section class="slide" data-label="04 / The fix">
+  <div class="kicker">04 / The fix</div>
+  <h2>On restart, ask the table</h2>
+  <p class="lead small">Lab 3.4 kills the job after 40 batches. The restart reads the offset from the newest snapshot that has one.</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="rec bad"><b>snapshot 40 · killed</b><span>batch ending 01:00 · 25 Sep</span><i>3693</i></div>
+    <div class="rec good"><b>restart</b><span>newest snapshot with an offset</span><i>3693</i></div>
+    <div class="rec dim"><b>snapshots 41 … 179</b><span>the other 139 batches</span></div>
+  </div>
+  <pre class="code s mt-s" data-file="lab 3.4"><code class="language-python">def committed_offset(tbl):
+    for snap in reversed(tbl.snapshots()):
+        off = snap.summary.additional_properties.get("qafila.offset")
+        if off is not None: return int(off)
+    return 0</code></pre>
+  <div class="cols cols-3 mid gap-s mt-s">
+    <div class="stat center"><div class="big">0</div><div class="lbl">batches written twice</div></div>
+    <div class="stat center"><div class="big">0</div><div class="lbl">batches skipped</div></div>
+    <div class="callout note"><b>Compaction commits</b> (later today) carry no offset: skip them.</div>
+  </div>
+  <div class="callout tip mt-s"><b>The table is the checkpoint.</b> Whatever the table holds, it also knows how far it got.</div>
+  <aside class="notes">Lab 3.4 task 2: the job is killed after its 40th batch, the one that ended at 01:00 on 25 September; snapshot 40 says offset 3693. The restart walks the snapshots backwards, finds 3693 and continues with batch 41: nothing written twice, nothing skipped. The loop skips snapshots without an offset because maintenance commits, like the compaction later in this session, don't carry one.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="04 / Repeats">
+  <div class="kicker">04 / Repeats</div>
+  <h2>The phones still send repeats</h2>
+  <p class="lead small">D3_3's retries are in the log too. Keep the event_ids of the last two batches, and skip any id seen again.</p>
+  <div class="cols cols-2 gap-s mt-s">
+    <div class="stack dense">
+      <div class="rec good"><b>ev-0013926 · arrived 01:07:34</b><span>order 5043638 · picked up 01:07:31 · new: write it</span><i>+1</i></div>
+      <div class="rec bad"><b>ev-0013926 · arrived 01:08:34</b><span>the same event, 60 s later · seen: skip it</span><i>+0</i></div>
+    </div>
+    <div class="card c-navy"><h4>Seen ids</h4><p class="small mb0">the event_ids of the last two batches: one hour. Repeats arrive within 90 s.</p></div>
+  </div>
+  <div class="cols cols-3 mid mt-s">
+    <div class="stat center"><div class="big">13,506</div><div class="lbl">events arrived</div></div>
+    <div class="stat center"><div class="big">190</div><div class="lbl">repeats skipped</div></div>
+    <div class="stat center"><div class="big" style="color:var(--teal)">13,316</div><div class="lbl">rows, all distinct ✓</div></div>
+  </div>
+  <div class="callout note mt-s"><b>A crash, a restart and the phones' repeats:</b> every event exactly once.</div>
+  <div class="callout tip mt-s"><b>Offset in the commit + skip repeated ids</b> = every event in the table exactly once.</div>
+  <aside class="notes">A real repeat from batch 176: courier CR-DAM-015's phone sent picked_up for order 5043638 (Dammam) at 01:07:34 and again at 01:08:34 with the same event_id. The offset in the commit stops the job's own replays; the phones' repeats need a key, as in D3_3. The memory is bounded: over these 4 days every repeat arrived within 90 seconds of the first copy, so the ids of the last two 30-minute batches are enough. Spark calls this dropDuplicatesWithinWatermark. Lab 3.4 proves the result: 13,316 rows, 13,316 distinct event_ids, the same as the distinct ids in the stream.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a> · <a href="https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html">spark</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Small files">
+  <div class="kicker">05 / Small files</div>
+  <h2>Every commit adds a file</h2>
+  <p class="lead small">Each batch writes its rows as a new Parquet file. Nothing merges them.</p>
+  <div class="cols cols-32 mid mt-s">
+    <table class="t small">
+      <tr><th colspan="3">bronze/delivery_events/data/</th></tr>
+      <tr><th>folder</th><th class="num">files</th><th class="num">average size</th></tr>
+      <tr><td><code>event_day=2026-09-24/</code></td><td class="num">42</td><td class="num">5.1 kB</td></tr>
+      <tr><td><code>event_day=2026-09-25/</code></td><td class="num">46</td><td class="num">5.0 kB</td></tr>
+      <tr><td><code>event_day=2026-09-26/</code></td><td class="num">46</td><td class="num">4.7 kB</td></tr>
+      <tr class="hl"><td><code>event_day=2026-09-27/</code></td><td class="num">45</td><td class="num">4.7 kB</td></tr>
+    </table>
+    <div class="cols cols-2 gap-s">
+      <div class="stat center"><div class="big">179</div><div class="lbl">data files in 4 days</div></div>
+      <div class="stat center"><div class="big">4.9 kB</div><div class="lbl">per file, on average</div></div>
+      <p class="small mb0" style="grid-column:1/-1">Batch 177's file is the 43rd of the 45 on 27 September: Khalid's batch, 12 rows, 3.6 kB.</p>
+    </div>
+  </div>
+  <div class="callout note mt-s"><b>Engines like files of 100 MB or more.</b> Every file costs an open, a footer read and a storage request.</div>
+  <div class="callout tip mt-s"><b>The small-files problem:</b> thousands of tiny files make every read slow. A stream creates it by design.</div>
+  <aside class="notes">Lab 3.4 task 3, before compaction: 179 data files, one per batch, 4.9 kB on average, 873 kB in all. Each row of the table is one day folder; in the 27 September row the highlighted file is snapshot 177's, Khalid's 12-row batch in 3.6 kB. The day folders are UTC days, so Khalid's events (01:36 Riyadh on 28 September) sit in event_day=2026-09-27. Each file means another object to open and another footer to read (Parquet, D1_2), and on object storage every request is billed. Shorter batches make it worse: fresher data, more files. At Qafila's real scale, a 1-minute trigger would write 1,440 files a day per partition touched.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Compaction">
+  <div class="kicker">05 / Compaction</div>
+  <h2>Compaction: rewrite each day as one file</h2>
+  <p class="lead small">One more commit: read the day's rows, write them back sorted by time, in one file. Same rows.</p>
+  <table class="t small mt-s">
+    <tr><th>folder</th><th class="num">files before</th><th class="num">average before</th><th class="num">files after</th><th class="num">size after</th></tr>
+    <tr><td><code>event_day=2026-09-24/</code></td><td class="num">42</td><td class="num">5.1 kB</td><td class="num"><b>1</b></td><td class="num"><b>77 kB</b></td></tr>
+    <tr><td><code>event_day=2026-09-25/</code></td><td class="num">46</td><td class="num">5.0 kB</td><td class="num"><b>1</b></td><td class="num"><b>82 kB</b></td></tr>
+    <tr><td><code>event_day=2026-09-26/</code></td><td class="num">46</td><td class="num">4.7 kB</td><td class="num"><b>1</b></td><td class="num"><b>72 kB</b></td></tr>
+    <tr><td><code>event_day=2026-09-27/</code></td><td class="num">45</td><td class="num">4.7 kB</td><td class="num"><b>1</b></td><td class="num"><b>73 kB</b></td></tr>
+  </table>
+  <div class="cols cols-4 gap-s mid mt-s">
+    <div class="stat center"><div class="big" style="font-size:48px;white-space:nowrap">179 → 4</div><div class="lbl">data files</div></div>
+    <div class="stat center"><div class="big" style="font-size:48px;white-space:nowrap">4.9 → 76 kB</div><div class="lbl">average file</div></div>
+    <div class="stat center"><div class="big" style="font-size:48px;white-space:nowrap">0.5 → 0.02 s</div><div class="lbl">full table scan</div></div>
+    <div class="stat center"><div class="big" style="font-size:48px;white-space:nowrap">13,316</div><div class="lbl">rows before and after: nothing changed</div></div>
+  </div>
+  <div class="callout tip mt-s"><b>Compaction:</b> rewrite many small files into a few large ones. The data doesn't change; reads get much faster.</div>
+  <aside class="notes">Lab 3.4 task 3: for each day, scan its rows, sort by event time and overwrite the day with one file. Each day's many small files become one file holding the same rows. 179 files become 4, the average file grows from 4.9 kB to 76 kB, and a full scan on a laptop goes from about 0.5 s to 0.02 s (your timings will differ; the ratio is what matters). The row count is checked to be identical. Compaction is a commit too: a new snapshot with fewer, bigger files. In production nobody hand-rolls this: Spark's rewrite_data_files procedure, or a managed service, does it on a schedule.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a> · <a href="https://iceberg.apache.org/docs/latest/maintenance/">iceberg</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Housekeeping">
+  <div class="kicker">05 / Housekeeping</div>
+  <h2>Three chores keep a streaming table healthy</h2>
+  <p class="lead small">Run them on cold partitions (yesterday's), so they don't race the stream job.</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="card c-teal"><h4>Compact</h4><p class="small">rewrite small files into large ones</p><span class="pill c-teal">rewrite_data_files</span></div>
+    <div class="card c-cyan"><h4>Expire snapshots</h4><p class="small">drop old snapshots: 48 new ones a day</p><span class="pill c-cyan">expire_snapshots</span></div>
+    <div class="card c-purple"><h4>Remove orphan files</h4><p class="small">delete files that no snapshot points to</p><span class="pill c-purple">remove_orphan_files</span></div>
+  </div>
+  <div class="callout note mt-s"><b>Compaction and the stream job both commit.</b> If they touch the same day at the same moment, one of them retries.</div>
+  <div class="callout tip mt-s"><b>S3 Tables, Databricks and Snowflake</b> run these for you.</div>
+  <div class="callout tip mt-s"><b>Maintenance:</b> compact, expire snapshots, remove orphan files. Otherwise reads slow down and storage only grows.</div>
+  <aside class="notes">One 30-minute stream makes 48 snapshots a day; after a month, time travel reaches back through 1,440 of them and every old file is still on disk. Expiring snapshots (D3_1's stretch task) drops old versions; removing orphan files deletes data files that no snapshot references any more, such as leftovers of failed writes and expired snapshots. Each chore is itself a commit, so it can conflict with the stream job: Iceberg's optimistic concurrency makes the loser retry, and scheduling the chores on yesterday's partitions avoids most conflicts.<p class="small">Sources: <a href="https://iceberg.apache.org/docs/latest/maintenance/">iceberg</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / The answer">
+  <div class="kicker">06 / The answer</div>
+  <h2>The question, straight off the table</h2>
+  <p class="lead small">DuckDB reads the Iceberg table and joins the app's orders. Khalid's order first.</p>
+  <div class="cols cols-2 gap-s mt-s">
+    <table class="t small">
+      <tr><th colspan="3">bronze.delivery_events <span class="muted">· Iceberg</span></th></tr>
+      <tr><th>order_id</th><th>event</th><th>event_ts</th></tr>
+      <tr><td><b>5043883</b></td><td>delivered</td><td>28 Sep 01:54:55</td></tr>
+    </table>
+    <table class="t small">
+      <tr><th colspan="3">app.orders <span class="muted">· app database</span></th></tr>
+      <tr><th>order_id</th><th>store</th><th>created_at</th></tr>
+      <tr><td><b>5043883</b></td><td>RUH-05</td><td>28 Sep 01:35:37</td></tr>
+    </table>
+  </div>
+  <div class="rec good mt-s"><b>order 5043883 · RUH-05</b><span>01:35:37 → 01:54:55</span><i>19.3 min ✓</i></div>
+  <pre class="code s" style="margin-top:6px" data-file="lab 3.4"><code class="language-sql">SELECT o.store_id,
+  avg((d.delivered_ts - o.created_at &lt;= INTERVAL 30 MINUTE)::INT) AS sla_rate
+FROM delivered d    -- the delivered events, from iceberg_scan(…)
+JOIN app.orders o USING (order_id)
+GROUP BY o.store_id</code></pre>
+  <div class="callout tip mt-s"><b>The stream became a table:</b> one SQL query joins it with the app's orders.</div>
+  <aside class="notes">Lab 3.4 task 4, simplified: DuckDB's iceberg_scan reads the table's current snapshot, the delivered events are joined with app.orders on order_id, and each order's minutes from created_at to the delivered event are compared with 30. Khalid's order took 19.3 minutes: inside the promise (the same 19.3 minutes as his delivery row in D2_2). The app stores created_at in UTC without a zone, so the lab converts it before subtracting.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / The answer">
+  <div class="kicker">06 / The answer</div>
+  <h2>Olaya (RUH-01) keeps only 37% of its promises</h2>
+  <p class="lead small">Share of each store's orders delivered within 30 minutes, 24–27 September.</p>
+  <div class="cols cols-2 gap-s" style="margin-bottom:8px">
+    <div class="bars">
+      <div class="row"><span>DMM-01</span><div class="bar c-teal" style="--w:78.1%"></div><span class="val">78%</span></div>
+      <div class="row"><span>RUH-02</span><div class="bar c-teal" style="--w:73.9%"></div><span class="val">74%</span></div>
+      <div class="row"><span>JED-04</span><div class="bar c-teal" style="--w:73.2%"></div><span class="val">73%</span></div>
+      <div class="row"><span>JED-02</span><div class="bar c-teal" style="--w:72.9%"></div><span class="val">73%</span></div>
+      <div class="row"><span>RUH-05</span><div class="bar c-navy" style="--w:72.8%"></div><span class="val">73%</span></div>
+      <div class="row"><span>JED-03</span><div class="bar c-teal" style="--w:72.8%"></div><span class="val">73%</span></div>
+    </div>
+    <div class="bars">
+      <div class="row"><span>RUH-04</span><div class="bar c-teal" style="--w:72.3%"></div><span class="val">72%</span></div>
+      <div class="row"><span>JED-01</span><div class="bar c-teal" style="--w:71.2%"></div><span class="val">71%</span></div>
+      <div class="row"><span>RUH-03</span><div class="bar c-teal" style="--w:69.4%"></div><span class="val">69%</span></div>
+      <div class="row"><span>DMM-02</span><div class="bar c-teal" style="--w:68.4%"></div><span class="val">68%</span></div>
+      <div class="row"><span>RUH-06</span><div class="bar c-teal" style="--w:67.6%"></div><span class="val">68%</span></div>
+      <div class="row"><span>RUH-01</span><div class="bar c-coral" style="--w:37.2%"></div><span class="val">37%</span></div>
+    </div>
+  </div>
+  <div class="callout warn small mt-s"><b>RUH-01 had 662 orders,</b> more than twice any other store. Its pickers can't keep up.</div>
+  <div class="callout note small mt-s"><b>Khalid's store, RUH-05:</b> 73%.</div>
+  <div class="callout tip small mt-s"><b>Near real time:</b> operations can see this during the day, not in tomorrow's report.</div>
+  <aside class="notes">Lab 3.4 task 4's check asks which store is struggling: RUH-01 (Olaya) delivers only 37% of its orders within 30 minutes, against 68–78% everywhere else. It is also by far the busiest store (662 delivered orders; the next is DMM-01 with 306): the data generator made it about 1.6 times busier, and its median delivery takes 32 minutes. Khalid's store, RUH-05, is in the pack at 73%. Because the table is at most 30 minutes behind, the operations lead sees this at 10:00 and can send extra pickers today.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="07 / Late data">
+  <div class="kicker">07 / Late data</div>
+  <h2>The 22:00 dashboard said 69. The table now says 71.</h2>
+  <p class="lead small">Deliveries in the hour 21:00–22:00 on 25 September. Two arrived after the dashboard read the table.</p>
+  <table class="t small mt-s">
+    <tr><th colspan="5">the two late deliveries <span class="muted">· almost all of the hour's deliveries arrive within seconds of happening</span></th></tr>
+    <tr><th>order</th><th>store</th><th class="num">happened</th><th class="num">arrived</th><th class="num">offline for</th></tr>
+    <tr><td><b>5041914</b></td><td>JED-01</td><td class="num">21:56</td><td class="num">22:39</td><td class="num">43 min</td></tr>
+    <tr><td><b>5041278</b></td><td>RUH-01</td><td class="num">21:58</td><td class="num">22:43</td><td class="num">45 min</td></tr>
+  </table>
+  <div class="cols cols-2 gap-s mt">
+    <div class="rec bad"><b>scan(snapshot_id = the one current at 22:00)</b><span>what the dashboard saw</span><i>69</i></div>
+    <div class="rec good"><b>scan() · the current snapshot</b><span>what the table says now</span><i>71</i></div>
+  </div>
+  <p class="small mt-s">The dashboard read the table at 22:00. Both late events landed in the 22:30–23:00 batch.</p>
+  <div class="callout tip mt-s"><b>The newest hour is always a little short.</b> Time travel shows what each reader saw; say which version each consumer gets.</div>
+  <aside class="notes">Lab 3.4's stretch task. The table lists the two late deliveries; every other delivery of the hour arrived within seconds of happening. Two are late: order 5041914 (JED-01) delivered at 21:56, arrived at 22:39; order 5041278 (RUH-01) delivered at 21:58, arrived at 22:43, phones that were offline for 43 and 45 minutes. The dashboard read the table at 22:00 and counted 69; both late events landed in the 22:30–23:00 batch, so the table now says 71. Neither number is wrong: scanning the snapshot that was current at 22:00 reproduces 69 exactly. Operations is fine with the live number; finance should read yesterday's hours the next morning. Write that down in the data contract (Day 4).<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a> · <a href="D3_3_streaming.html">D3_3_streaming.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="08 / Downstream">
+  <div class="kicker">08 / Downstream</div>
+  <h2>The table is a stream too</h2>
+  <p class="lead small">The silver job remembers the last snapshot it read, like a consumer offset, and asks only for what was added since.</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="rec"><b>snapshot 179</b><span>the last batch of the 4 days</span></div>
+    <div class="rec dim"><b>snapshots 180–187</b><span>compaction: rows moved, none added</span></div>
+    <div class="rec good"><b>snapshots 188–230</b><span>one more day: 43 batches</span><i>+2,962</i></div>
+  </div>
+  <p class="small mt-s"><b>▲ silver read up to 187</b> (the last snapshot it saw before the new day)</p>
+  <div class="cols cols-2 gap-s mid mt-s">
+    <pre class="code s" data-file="lab 3.4"><code class="language-python">tbl.incremental_append_scan(
+    from_snapshot_id_exclusive=last_seen)</code></pre>
+    <div class="card c-navy"><h4>Silver job</h4><p class="small">reads only the rows added after 187</p><p class="small mb0"><b>2,962</b> rows written · <b>2,962</b> read</p></div>
+  </div>
+  <div class="callout tip mt"><b>Incremental read:</b> the rows appended since a given snapshot. Jobs chain through tables instead of rescanning them.</div>
+  <aside class="notes">Lab 3.4 task 5. Iceberg records what each snapshot appended, so a downstream job keeps its own "offset": the last snapshot it processed. After the compaction the table is at snapshot 187; the stream runs one more day (43 batches, snapshots 188 to 230, 2,962 new rows), and the incremental read returns exactly those 2,962 rows. Compaction snapshots add no new rows, so incremental appends skip them. This is how Flink and Spark stream from Iceberg tables, and how dbt incremental models avoid full rebuilds.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / Architectures">
+  <div class="kicker">09 / Architectures</div>
+  <h2>Lambda: two paths for one number</h2>
+  <p class="lead small">A fast path for now, a nightly batch for the truth. Queries merge the two.</p>
+  <div class="flow mt">
+    <div class="step c-navy"><b>Log</b>Kafka, kept for days</div>
+    <div class="arrow">→</div>
+    <div class="stack dense">
+      <div class="step c-cyan"><b>Speed job</b>stream: fast, approximate</div>
+      <div class="step c-amber"><b>Batch job</b>nightly: slow, exact</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step c-purple"><b>Merged view</b>today from speed, older days from batch</div>
+    <div class="arrow">→</div>
+    <div class="step c-teal"><b>Operations</b>reads the merged view</div>
+  </div>
+  <div class="callout warn mt"><b>Every metric is written twice.</b> Fix a bug in one path, and the other still has it.</div>
+  <div class="callout tip mt-s"><b>Lambda:</b> a speed layer and a batch layer, merged at query time. Two code paths that drift apart.</div>
+  <aside class="notes">The classic answer from the 2010s, when streams were thought to be approximate. The batch layer recomputes the truth every night from the stored events; the speed layer covers the hours since; queries merge the two. It works, but every metric exists twice, often in two languages (a Flink job and a SQL model), and the two drift: the live delivery count and the nightly count disagree, and nobody knows which to trust.<p class="small">Sources: <a href="https://www.oreilly.com/radar/questioning-the-lambda-architecture/">kappa</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / Architectures">
+  <div class="kicker">09 / Architectures</div>
+  <h2>Kappa: one path. To fix it, replay the log.</h2>
+  <p class="lead small">The naive table had Khalid twice. Fix the job, replay the log from offset 0 into a new table.</p>
+  <div class="flow mt">
+    <div class="step c-navy"><b>Log</b>13,506 events, kept for days</div>
+    <div class="arrow">▶ from offset 0 →</div>
+    <div class="step c-cyan"><b>Fixed job</b>offset in the commit, skip repeats</div>
+    <div class="arrow">→</div>
+    <div class="step c-teal"><b>Readers</b>switch to v2</div>
+  </div>
+  <div class="cols cols-2 gap-s mt">
+    <div class="rec good"><b>delivery_events_v2</b><span>replayed with the fixed job</span><i>13,316</i></div>
+    <div class="rec bad"><b>delivery_events</b><span>the naive table: Khalid twice</span><i>13,518</i></div>
+  </div>
+  <div class="callout note mt"><b>Needs</b> a log kept long enough to replay, and a table you can rebuild and swap.</div>
+  <div class="callout tip mt-s"><b>Kappa:</b> one streaming path. A bug fix or a new metric means replaying the retained log through the new job.</div>
+  <aside class="notes">Demo 3.4 section 6 does exactly this: the naive table (with a replayed batch and the phones' repeats) is not patched; the fixed logic replays the retained log from offset 0 into a new table, and readers switch to it. On these 4 days that is 13,316 rows instead of 13,518. One code path, and the log is the source of truth. The catch: the log must be kept long enough (Kafka retention or tiered storage) and the output must be replaceable.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a> · <a href="https://www.oreilly.com/radar/questioning-the-lambda-architecture/">kappa</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / Architectures">
+  <div class="kicker">09 / Architectures</div>
+  <h2>What most teams run in 2026</h2>
+  <p class="lead small">Stream into bronze. Run the same dbt models on it every 5 to 15 minutes.</p>
+  <div class="flow mt-s">
+    <div class="step c-navy"><b>Courier phones</b>send the events</div>
+    <div class="arrow">→</div>
+    <div class="step c-navy"><b>Kafka</b>the log</div>
+    <div class="arrow">→</div>
+    <div class="step c-cyan"><b>Stream job</b>offset in the commit</div>
+    <div class="arrow">→</div>
+    <div class="step c-amber"><b>bronze</b>Iceberg, every 30 min</div>
+    <div class="arrow">→</div>
+    <div class="step c-purple"><b>dbt</b>the same models, every 15 min</div>
+    <div class="arrow">→</div>
+    <div class="step c-teal"><b>silver · gold</b>dashboards and SQL</div>
+  </div>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="card flat c-teal"><h4>One code path</h4><p class="small mb0">the dbt models from D2_3</p></div>
+    <div class="card flat c-cyan"><h4>Minutes, not seconds</h4><p class="small mb0">enough for operations</p></div>
+    <div class="card flat c-coral"><h4>Late data</h4><p class="small mb0">lands in the next run</p></div>
+  </div>
+  <div class="callout note mt-s"><b>Seconds matter</b> (a fraud check)? Keep that one metric in the stream job.</div>
+  <div class="callout tip mt-s"><b>The middle ground:</b> stream into a bronze table, then run batch models on it often. One path, near real time.</div>
+  <aside class="notes">Most of Qafila's questions need minutes, not seconds: this design gives that with the tools learners already have. The stream job only lands events in bronze (exactly once, offset in the commit); dbt models (D2_3) run every 5–15 minutes with incremental reads of the new snapshots and build silver and gold. Late events simply land in bronze and are picked up by the next run. Only the few metrics that need seconds, like the fraud check from D3_3, stay in a stream job.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a></p></aside>
+</section>
+
+<section class="slide" data-label="10 / The tools">
+  <div class="kicker">10 / The tools</div>
+  <h2>The same pattern, ready-made</h2>
+  <p class="lead small">Everything in this deck exists as a product or a procedure.</p>
+  <table class="t mt">
+    <tr><th>In this deck</th><th>In production</th></tr>
+    <tr><td><b>micro-batches with the offset in the commit</b></td><td>Spark Structured Streaming (<code>checkpointLocation</code>) · Flink (two-phase commit) · Kafka Connect Iceberg sink</td></tr>
+    <tr><td><b>a topic that is also a table</b></td><td>Confluent Tableflow · Redpanda Iceberg topics</td></tr>
+    <tr><td><b>compaction, expiry, orphan files</b></td><td><code>rewrite_data_files</code> · <code>expire_snapshots</code> · managed: S3 Tables, Databricks, Snowflake</td></tr>
+    <tr><td><b>incremental reads</b></td><td>Flink and Spark streaming reads · dbt incremental models</td></tr>
+  </table>
+  <div class="callout tip mt"><b>You built each piece by hand in the lab;</b> in production you configure them.</div>
+  <aside class="notes">Map each row to its slide. The Kafka Connect Iceberg sink lands topics as tables with no custom code and commits offsets with the data. Confluent Tableflow and Redpanda go further: the topic itself can be read as an Iceberg table. Spark's writeStream with format("iceberg"), a 30-minute trigger and a checkpointLocation is Lab 3.4's job in five lines (Demo 3.4 section 7 shows it).<p class="small">Sources: <a href="https://iceberg.apache.org/docs/latest/kafka-connect/">connect</a> · <a href="https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html">spark</a> · <a href="https://iceberg.apache.org/docs/latest/maintenance/">iceberg</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
+</section>
+
+<section class="slide" data-label="11 / The words">
+  <div class="kicker">11 / The words</div>
+  <h2>Twelve words for streams into tables</h2>
+  <p class="lead small">Every one appeared in this deck. Lab 3.4 uses them all.</p>
+  <div class="cols cols-2 mt">
+    <ul class="bullets tight small">
+      <li><b>Micro-batch</b> · what arrived in one interval</li>
+      <li><b>Commit</b> · one atomic change: a snapshot</li>
+      <li><b>Offset in the commit</b> · data and progress, saved together</li>
+      <li><b>Exactly once</b> · no repeats, no gaps in the table</li>
+      <li><b>Seen ids</b> · skip repeats from the phones</li>
+      <li><b>Small files</b> · many tiny files: slow reads</li>
+    </ul>
+    <ul class="bullets tight small">
+      <li><b>Compaction</b> · rewrite small files into large ones</li>
+      <li><b>Snapshot expiry</b> · drop old versions of the table</li>
+      <li><b>Orphan files</b> · files no snapshot points to</li>
+      <li><b>Incremental read</b> · rows added since a snapshot</li>
+      <li><b>Lambda</b> · a speed path and a batch path</li>
+      <li><b>Kappa</b> · one path; fix by replaying the log</li>
+    </ul>
+  </div>
+  <div class="callout tip mt"><b>One commit for data and progress, a few big files, and a table others can read as a stream:</b> the rest follows.</div>
+  <aside class="notes">A reference slide: point at each word and ask the room which slide it appeared on, and what happened to Khalid's batch there. Learners can come back to it during the lab.</aside>
+</section>
+
+<section class="slide" data-label="12 / Recall">
+  <div class="kicker">12 / Recall</div>
+  <h2>Your turn: answer before you look</h2>
+  <p class="lead small">Five questions on Khalid's batch and the table it landed in. Answer out loud, or with a neighbour.</p>
+  <ol class="bullets tight small">
+    <li>The job commits batch 177, crashes before it writes 13500 to checkpoint.json, and restarts. What is in the table?<div class="frag small muted">Batch 177 twice: the file still says 13488. Khalid's four events have 8 rows; 12 rows too many.</div></li>
+    <li>How does the fixed job know where to restart?<div class="frag small muted">It reads qafila.offset from the newest snapshot that has one: the offset is part of the same commit as the data.</div></li>
+    <li>179 batches left 179 files of 4.9 kB. What fixes it, and does it change the data?<div class="frag small muted">Compaction: rewrite each day as one file (4 files, 76 kB). Same 13,316 rows, in a new snapshot.</div></li>
+    <li>The 22:00 dashboard showed 69 deliveries for 21:00–22:00; the table now says 71. Which is wrong?<div class="frag small muted">Neither: two deliveries arrived at 22:39 and 22:43. Time travel reproduces the 69. Say which version each team gets.</div></li>
+    <li>The stream job had a bug. Patch the table with a batch job, or…?<div class="frag small muted">Kappa: fix the job and replay the retained log from offset 0 into a new table. One code path.</div></li>
+  </ol>
+  <div class="callout tip small mt-s"><b>Say it without the slides:</b> what you can recall now, you can use in the lab.<span class="frag"><br><b>Offset in the commit, compaction, time travel and replay:</b> the whole session in one line.</span></div>
+  <aside class="notes">About 3 minutes. Read each question, give the room 20–30 seconds, and take an answer before moving on. Don't reveal until people have committed to an answer; then press to show it. Go back to the slide for any answer the room missed: the crash and the duplicate batch (slides 6 to 8), the offset in the commit (9 and 10), small files and compaction (12 and 13), late data (17), Kappa (20).</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 3.4">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 3.4 · 25 min</div>
+      <h2>Streams into the lakehouse</h2>
+      <p class="lead small">A crash-proof stream job into Iceberg, compaction, and the SLA query straight off the table.</p>
+      <div class="stack dense">
+        <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">Lab · D3_4_stream_to_lakehouse.ipynb</a>
+        <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">Demo 3.4 · the slides, run on the data</a>
+        <a class="nb" href="https://www.oreilly.com/radar/questioning-the-lambda-architecture/">Further reading · Questioning the Lambda architecture</a>
+        <a class="nb" href="../index.html">Back to the course page</a>
+      </div>
+      <div class="callout tip mt-s"><b>Next: Day 4 · orchestration.</b> The stream job and the chores run on a schedule.</div>
+    </div>
+    <ul class="checklist">
+      <li>A bronze table; the offset in the commit <span class="min">6 min</span></li>
+      <li>Crash, restart, no duplicates <span class="min">5 min</span></li>
+      <li>Small files and compaction <span class="min">5 min</span></li>
+      <li>The SLA query, straight off the table <span class="min">5 min</span></li>
+      <li>Incremental reads for the next job <span class="min">4 min</span></li>
+      <li class="stretch">Stretch: time travel the dashboard: late data rewrites the last hour (69 → 71). Find Khalid's batch in your table: the snapshot whose qafila.offset is 13500.</li>
+    </ul>
+  </div>
+  <aside class="notes">Hand over to the lab. A quick first check after task 2: the snapshot whose qafila.offset is 13500 holds 12 rows, Khalid's batch. If you skipped Demo 3.4 sections 2 and 6 live, point learners to them: they run the naive crash and the Kappa replay on the real data.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb">lab</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
+</section>
+
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

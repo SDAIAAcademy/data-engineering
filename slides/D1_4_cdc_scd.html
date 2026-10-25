@@ -1,7 +1,548 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D1_4 · Change data capture and history · Modern Data Engineering</title>
-<link rel="icon" href="../assets/img/academy.svg"><link rel="stylesheet" href="../assets/story/story.css"></head>
-<body><main id="stage" aria-label="Change data capture presentation"></main>
-<nav id="toolbar" aria-label="Presentation controls"><button id="previous" aria-label="Previous slide" title="Previous slide">←</button><button id="notes" aria-label="Show speaker notes" aria-expanded="false" title="Speaker notes (N)">N</button><button id="overview" aria-label="Slide overview" title="Overview (O)">▦</button><button id="fullscreen" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button><button id="next" aria-label="Next slide" title="Next slide">→</button></nav>
-<aside id="notes-panel" aria-label="Speaker notes"></aside><div id="live-status" aria-live="polite" aria-atomic="true"></div><script src="../assets/story/story.js"></script><script src="../assets/story/D1_4_cdc_scd.js"></script></body></html>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+/* the SCD2 build closes a version in place: "null · current" gives way to the real valid_to when the next version arrives */
+.vto .now { display: none; }
+.slide:has([data-frag="v2"].on) .vto1 .was, .slide:has([data-frag="v3"].on) .vto2 .was { display: none; }
+.slide:has([data-frag="v2"].on) .vto1 .now, .slide:has([data-frag="v3"].on) .vto2 .now { display: inline; }
+body.overview .vto .was { display: none; }
+body.overview .vto .now { display: inline; }
+@media print { .vto .was { display: none; } .vto .now { display: inline; } }
+/* compact callouts and code for the dense build-ups */
+.callout.s { padding: 9px 22px; font-size: 22px; border-radius: 12px; }
+pre.code.s { padding: 12px 22px; }
+pre.code.mt-s { margin-top: 14px; }
+.evt { white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 1">
+
+<section class="slide title" data-label="Change data capture and history">
+  <div class="kicker">Modern Data Engineering · Day 1</div>
+  <h1>Change data capture and history</h1>
+  <p class="lead mt">One customer moves city. Keep up, and remember.</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>Day 1 · Session 4</span>
+    <span>Customer 100898</span>
+    <span>about 25 minutes, then Lab 1.4</span>
+  </div>
+  <aside class="notes">Follow every change a source makes, then keep the history. About 25 minutes for the slides, then Lab 1.4 (25 minutes). If window functions are new to the room, start with the 15–20 minute core of 00_sql_windows: row_number to dedupe, lead for valid_to, QUALIFY. One real customer, 100898, runs through the whole deck: on 2 September they changed their email and then moved from Dammam to Jeddah. Khalid from the introduction appears once more, at sign-up. Many slides are builds: the heading stays and one piece arrives per key press, so pause on each step. Every number comes from the course data and Lab 1.4.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions</a> · <a href="00_intro.html">course introduction</a></p></aside>
+</section>
+
+<section class="slide" data-label="00 / You are here">
+  <div class="kicker">00 / You are here</div>
+  <h2>Changes, not just new rows</h2>
+  <p class="lead small">Still the ingest stage. Today the source also updates and deletes rows: changes, deletes, history.</p>
+  <div class="pmap" style="grid-auto-rows:40px;margin-top:10px" data-here="cdc" data-met="dlt,duckdb,parquet,polars,semantic,streaming,iceberg,dbt,ai,spark,pandera,contracts,dagster,observe,govern"></div>
+  <div class="callout tip s mt-s"><b>Bronze keeps every change.</b> Silver builds two tables from them: the customers now, and their history.</div>
+  <aside class="notes">The course map, with CDC + MERGE lit. In D1_3, dlt loaded new and updated rows with a cursor on updated_at. The app database also deletes rows, and it keeps no history. Today’s source is a feed of changes; from it we build the current state (MERGE) and the history (SCD Type 2).</aside>
+</section>
+
+<section class="slide" data-label="01 / The change">
+  <div class="kicker">01 / The change</div>
+  <h2>Customer 100898 changes twice in one evening</h2>
+  <p class="lead small">2 September, as the app recorded it (times in UTC, as the app writes them).</p>
+  <div class="cols cols-3 gap-s mid mt">
+    <div class="card c-navy"><h4>Customer 100898</h4><p class="small mb0">a customer since 2025</p></div>
+    <div class="rec c-cyan"><b>2 Sep 17:15 · new email</b><span>icloud.com → yahoo.com</span></div>
+    <div class="rec c-cyan"><b>2 Sep 18:49 · moves city</b><span>Dammam · Al Nuzha → Jeddah · Al Hamra</span></div>
+  </div>
+  <p class="mt center">In September: <b>4,458</b> profile edits · <b>1,541</b> sign-ups · <b>159</b> erasure requests</p>
+  <div class="callout note s mt-s">Each edit changes the same row of the app’s customers table.</div>
+  <div class="callout tip s mt-s"><b>Customers change</b> after they sign up. Today our copy must follow every change.</div>
+  <aside class="notes">The introduction’s customers slide, now with one real customer. At 17:15 customer 100898 changed their email; at 18:49 they moved from Al Nuzha in Dammam to Al Hamra in Jeddah. Times are UTC, as the app database and the feed record them (18:49 UTC is 21:49 in Riyadh). The September counts are the ones the introduction showed: they come from the change feed we read today.<p class="small">Sources: <a href="00_intro.html">course introduction</a></p></aside>
+</section>
+
+<section class="slide" data-label="01 / The change">
+  <div class="kicker">01 / The change</div>
+  <h2>The app keeps only the latest row</h2>
+  <p class="lead small">app.customers holds one row per customer. Each edit overwrote the one before.</p>
+  <p class="kicker mt mb0">app.customers · customer 100898</p>
+  <div class="cols cols-3 gap-s">
+    <div><p class="small muted mb0">1 Sep</p><div class="rec dim"><b>customer 100898</b><span>Dammam · Al Nuzha · icloud email</span></div></div>
+    <div><p class="small muted mb0">after 17:15</p><div class="rec dim"><b>customer 100898</b><span>Dammam · Al Nuzha · yahoo email</span></div></div>
+    <div><p class="small muted mb0">after 18:49</p><div class="rec"><b>customer 100898</b><span>Jeddah · Al Hamra · yahoo email</span></div></div>
+  </div>
+  <div class="callout warn s mt-s"><b>Overwritten:</b> these values are gone from the app.</div>
+  <p class="mt-s"><b>State</b> · how things are now. The introduction’s order row worked the same way.</p>
+  <div class="callout tip s mt-s">Where did 100898 live at 18:00? The app can no longer say.</div>
+  <div class="callout tip s mt-s"><b>The app keeps state:</b> every change overwrites the row, and the old values are lost.</div>
+  <aside class="notes">This is the introduction’s “state or events” slide again, for a customer instead of an order. The app database stores only the result of each edit. That is the right design for the app: it needs to know where to deliver now. It is a problem for anyone who asks about the past.<p class="small">Sources: <a href="00_intro.html">course introduction</a></p></aside>
+</section>
+
+<section class="slide" data-label="01 / The change">
+  <div class="kicker">01 / The change</div>
+  <h2>Our copy still says Dammam</h2>
+  <p class="lead small">Day 1 copied customers from a snapshot on 1 September. The teams read the copy, not the app.</p>
+  <div class="cols cols-3 gap-s mid mt">
+    <div><p class="small muted mb0">the app · today</p><div class="rec"><b>customer 100898</b><span>Jeddah · Al Hamra · yahoo email</span></div></div>
+    <div class="stat center"><div class="big">≠</div><div class="lbl">different rows</div></div>
+    <div><p class="small muted mb0">our copy · from the 1 Sep snapshot</p><div class="rec bad"><b>our copy · 100898</b><span>Dammam · Al Nuzha · icloud email</span></div></div>
+  </div>
+  <div class="cols cols-12 gap-s mid mt">
+    <div class="card c-purple"><h4>Marketing</h4><p class="small mb0">“Spend by customer city?”</p></div>
+    <div class="stack dense">
+      <div class="callout warn s">Every report on our copy puts 100898 in Dammam.</div>
+      <p class="mb0">September: <b>6,158</b> changes to <b>4,542</b> customers</p>
+    </div>
+  </div>
+  <div class="callout tip s mt-s">Which rows changed, and how do we find out?</div>
+  <div class="callout tip s mt-s"><b>A copy goes stale</b> the moment the source changes. We need to learn every change.</div>
+  <aside class="notes">Our copy is the 1 September snapshot (data/raw/cdc/customers_snapshot_2026-09-01.csv): 6,060 customers. By 30 September the app has 7,442, and 4,542 customers changed in some way: they signed up, edited their profile or were erased. Marketing reports spend by customer city from our copy, so every one of 100898’s orders still counts as Dammam. Ask the room how they would find out which rows changed.</aside>
+</section>
+
+<section class="slide top" data-label="02 / Capturing change">
+  <div class="kicker">02 / Capturing change</div>
+  <h2>How do we learn what changed?</h2>
+  <p class="lead small">Three ways. Each one sees customer 100898’s evening differently.</p>
+  <div class="cols mid mt-s" style="grid-template-columns:1.2fr 1fr 1.1fr;gap:10px 24px">
+    <div style="grid-row:1;grid-column:1"><b>Copy it all again, compare</b><br><span class="xsmall muted">a full snapshot every night</span></div>
+    <div class="rec c-cyan" style="grid-row:1;grid-column:2"><b>next night: one difference</b><span>Dammam → Jeddah, and a new email</span></div>
+    <div class="xsmall" style="grid-row:1;grid-column:3">The 17:15 version is never seen. Reads every row, every night.</div>
+    <div class="callout tip s" style="grid-row:2;grid-column:1/-1"><b>Way 1:</b> compare full copies. Simple, but heavy, and it sees only the net change.</div>
+    <div class="frag" data-frag="w2" style="grid-row:3;grid-column:1"><b>Ask for recent rows</b><br><span class="xsmall muted">updated_at after the last run: dlt’s cursor (D1_3)</span></div>
+    <div class="rec c-cyan frag" data-frag="w2" style="grid-row:3;grid-column:2"><b>next run: the row as it is now</b><span>Jeddah · Al Hamra · updated 18:49</span></div>
+    <div class="xsmall frag" data-frag="w2" style="grid-row:3;grid-column:3"><b style="color:var(--coral)">Hard delete:</b> the row is gone. 159 erasures never seen.<br><b>Soft delete:</b> just a flag, so it’s seen.</div>
+    <div class="callout tip s frag" data-frag="w2" style="grid-row:4;grid-column:1/-1"><b>Way 2:</b> ask for rows changed since the last run. Cheap, but blind to hard deletes.</div>
+    <div class="frag" data-frag="w3" style="grid-row:5;grid-column:1"><b style="color:var(--teal)">Read the database’s log</b><br><span class="xsmall muted">every change, as it is written</span></div>
+    <div class="evts frag" data-frag="w3" style="grid-row:5;grid-column:2">
+      <div class="evt"><b>lsn 5006670</b><span>17:15 · email changed</span></div>
+      <div class="evt"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div>
+    </div>
+    <div class="xsmall frag" data-frag="w3" style="grid-row:5;grid-column:3"><b style="color:var(--teal)">Every insert, update and delete, in order, within seconds.</b></div>
+    <div class="callout tip s frag" data-frag="w3" style="grid-row:6;grid-column:1/-1"><b>Change data capture (CDC):</b> learning every change a source makes. Reading its log is the complete way.</div>
+  </div>
+  <aside class="notes">A build: one way per key press. Way 1, snapshot diff: copy the whole table every night and compare with yesterday’s copy. Fine for small tables, but it reads every row every time, and it sees only the net change per night: the 17:15 version, with the new email but the old city, never shows up. Way 2, query-based: WHERE updated_at > the last cursor. This is exactly what dlt’s incremental cursor did in D1_3. It is cheap and it works for many tables, but it misses hard deletes (the row is gone, so nothing matches), any change that doesn’t touch updated_at, and every version between two runs. A soft delete is different: the app keeps the row and sets is_deleted = 1, an ordinary update, so the cursor sees it (492 in September). Every consumer then has to filter those rows out. Way 3: log-based CDC reads the database’s own transaction log (PostgreSQL logical replication, the MySQL binlog). It sees both of 100898’s edits, deletes included, in commit order, and it doesn’t query the tables at all. The next slide shows what that log is.<p class="small">Sources: <a href="https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-events">Debezium change events</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / The log">
+  <div class="kicker">02 / The log</div>
+  <h2>The database writes every change to its log</h2>
+  <p class="lead small">Before it changes a table, the database appends the change to a log. 100898’s edits sit among everyone else’s.</p>
+  <p class="kicker mt mb0">The log · in the order the changes were committed →</p>
+  <div class="evts">
+    <div class="evt"><b>lsn 5006617</b><span>102425 · update</span><small>17:03</small></div>
+    <div class="evt"><b>lsn 5006654</b><span>103435 · delete</span><small>17:14</small></div>
+    <div class="evt" style="border-color:var(--teal)"><b>lsn 5006670</b><span>100898 · update</span><small>17:15</small></div>
+    <div class="evt ghost"><b>…</b><span>other changes</span></div>
+    <div class="evt" style="border-color:var(--teal)"><b>lsn 5007086</b><span>100898 · update</span><small>18:49</small></div>
+  </div>
+  <div class="cols cols-3 gap-s mt">
+    <div class="card c-navy"><h4>Log</h4><p class="small mb0">the database writes each change here first, so it can recover after a crash</p></div>
+    <div class="card c-purple"><h4>lsn · log sequence number</h4><p class="small mb0">a change’s position in the log: higher means later</p></div>
+    <div class="card c-amber"><h4>Debezium</h4><p class="small mb0">a CDC connector: reads the log and sends each change on as an event</p></div>
+  </div>
+  <div class="callout tip s mt-s">The log already exists, so reading it adds almost no load to the app.</div>
+  <div class="callout tip s mt-s"><b>Log-based CDC:</b> a connector reads the database’s log and turns each change into an event.</div>
+  <aside class="notes">Real lsns from the feed. Every change to every table goes into the log in commit order, deletes included (customer 103435 was erased at 17:14). The lsn, log sequence number, is the position: it only grows. Debezium is the common open-source connector; it usually sends the events through Kafka, which Day 3 covers. Managed options are Fivetran, AWS DMS and Datastream.<p class="small">Sources: <a href="https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-events">Debezium change events</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / A change event">
+  <div class="kicker">02 / A change event</div>
+  <h2>One change, as the connector writes it</h2>
+  <p class="lead small">Debezium writes customer 100898’s move as a change event (unchanged fields shortened).</p>
+  <div class="cols cols-32 gap-s mt">
+    <table class="t small">
+      <tr><th colspan="2">change event · customers</th></tr>
+      <tr><td><code>op</code></td><td><code>u</code></td></tr>
+      <tr><td><code>before</code></td><td><code>{ city: Dammam, district: Al Nuzha, … }</code></td></tr>
+      <tr><td><code>after</code></td><td><code>{ city: Jeddah, district: Al Hamra, … }</code></td></tr>
+      <tr class="hl frag" data-frag="lsn"><td><code>source.lsn</code></td><td><code>5007086</code></td></tr>
+      <tr class="frag" data-frag="lsn"><td><code>ts_ms</code></td><td><code>1788374988697</code> · 2 Sep 18:49:48</td></tr>
+    </table>
+    <ul class="bullets tight small">
+      <li><b>op</b> · what happened<br><span class="muted">c create · u update · d delete</span></li>
+      <li><b>before, after</b> · the whole row<br><span class="muted">name, mobile and national ID too</span></li>
+      <li class="frag" data-frag="lsn"><b>source.lsn</b> · its place in the log<br><span class="muted">the true order of the changes</span></li>
+      <li class="frag" data-frag="lsn"><b>ts_ms</b> · the commit time<br><span class="muted">two changes can share a millisecond</span></li>
+    </ul>
+  </div>
+  <div class="callout tip s mt-s"><b>Change event:</b> one change, carrying the whole row before and after it.</div>
+  <div class="callout tip s mt-s frag" data-frag="lsn">Every event carries its <b>lsn</b>, the true order of the changes. The next slide shows why that matters.</div>
+  <aside class="notes">The real event from data/raw/cdc/customers_changes.jsonl, with the unchanged fields elided. A delete has only before; an insert only after. (Debezium also uses r for rows read during its first snapshot.) The images are full rows, so personal data (name, mobile, national ID) travels through the pipeline: remember that on Day 4. Press once more for source.lsn and ts_ms: lsn orders every change in the database, which ts_ms cannot do: milliseconds collide in a busy database. We use ts_ms later as the moment a version starts. In Kafka the message key is the primary key, customer_id.<p class="small">Sources: <a href="https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-events">Debezium change events</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / The feed">
+  <div class="kicker">03 / The feed</div>
+  <h2>How the events reach us</h2>
+  <p class="lead small">September’s feed holds 6,346 events. Here are customer 100898’s, in the order they arrived.</p>
+  <p class="kicker mt mb0">Arrival order →</p>
+  <div class="evts">
+    <div class="evt"><b>arrived #333</b><span>lsn 5006670</span><small>17:15 · email changed</small></div>
+    <div class="evt"><b>arrived #347</b><span>lsn 5007086</span><small>18:49 · Dammam → Jeddah</small></div>
+    <div class="evt"><b>arrived #360</b><span>lsn 5006670</span><small>17:15 · email changed</small></div>
+  </div>
+  <div class="callout tip s mt"><b>Compare #360 with #333.</b> The feed lists events in <b>arrival order</b>. Look at #360 before the next press.</div>
+  <div class="callout warn s mt-s frag" data-frag="dup"><b>lsn 5006670 again:</b> re-sent after the connector restarted, and after a newer change.</div>
+  <div class="cols cols-2 gap-s mt-s frag" data-frag="dup">
+    <p class="mb0 small"><b>188</b> events delivered twice (rows − distinct lsn)</p>
+    <p class="mb0 small"><b>3,492</b> arrived after an event with a higher lsn</p>
+  </div>
+  <div class="callout tip s mt-s frag" data-frag="dup"><b>At-least-once delivery:</b> an event can arrive twice, and late. For CDC that is normal, not a bug: restarts re-send, partitions reorder.</div>
+  <aside class="notes">Arrival is the position in the file, as the connector delivered it. Give the room 20 seconds: what do #333 and #360 have in common? (The same lsn and the same content.) Then press: the third event is a redelivery of the first: same lsn, same content, sent again after a connector restart, and it arrives after the move. Connectors promise at-least-once: they would rather send an event twice than lose it. Lab 1.4 task 1 counts both kinds across the feed: 6,346 events, 6,158 distinct lsns, and 3,492 events that arrived after one with a higher lsn.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="04 / Predict">
+  <div class="kicker">04 / Predict</div>
+  <h2>Apply them in arrival order</h2>
+  <div class="evts mt-s" style="margin-bottom:16px">
+    <div class="evt"><b>arrived #333</b><span>lsn 5006670</span><small>17:15 · email changed</small></div>
+    <div class="evt"><b>arrived #347</b><span>lsn 5007086</span><small>18:49 · Dammam → Jeddah</small></div>
+    <div class="evt bad"><b>arrived #360</b><span>lsn 5006670</span><small>17:15 · email changed, re-sent</small></div>
+  </div>
+  <div class="quiz">
+    <p class="lead small">Overwrite our copy with each event’s after image, in arrival order. Where does customer 100898 live at the end? Choose an answer, then say which event is applied last.</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Jeddah · Al Hamra</div>
+      <div class="opt" data-k="B" data-ok>Dammam · Al Nuzha</div>
+      <div class="opt" data-k="C">Two rows, one per city</div>
+    </div>
+    <div class="callout tip why"><b>Yes.</b> #360 arrives last, and its after image still says Dammam. Each event carries the whole row, not only what changed, so people who answer Jeddah are thinking of events as “what changed”. Two rows cannot happen here: each event overwrites the same row.</div>
+  </div>
+  <aside class="notes">Allow 45 seconds. B is correct: #360 is applied last, and its after image is the whole row as it was at 17:15, city Dammam included. A is the common answer: people think of events as “what changed”. C cannot happen here: each event overwrites the same row.</aside>
+</section>
+
+<section class="slide" data-label="04 / Order by lsn">
+  <div class="kicker">04 / Order by lsn</div>
+  <h2>Arrival order or log order?</h2>
+  <p class="lead small">Apply each event’s after image in turn: the last one applied wins.</p>
+  <div class="mt-s">
+    <p class="kicker mb0">By arrival</p>
+    <div class="cols cols-32 gap-s mid">
+      <div class="evts">
+        <div class="evt"><b>arrived #333</b><span>lsn 5006670</span><small>17:15 · email changed</small></div>
+        <div class="evt"><b>arrived #347</b><span>lsn 5007086</span><small>18:49 · Dammam → Jeddah</small></div>
+        <div class="evt bad"><b>arrived #360</b><span>lsn 5006670</span><small>17:15 · email changed, re-sent</small></div>
+      </div>
+      <div class="rec bad"><b>our copy · 100898</b><span>Dammam · Al Nuzha ✗</span></div>
+    </div>
+    <div class="callout warn s mt-s"><b>#360 is applied last.</b> Its after image is the whole row as it was at 17:15: Dammam.</div>
+    <div class="callout warn s mt-s"><b>By arrival, the re-sent event wins:</b> our copy goes back to Dammam.</div>
+  </div>
+  <div class="mt-s frag" data-frag="lsn">
+    <p class="kicker mb0">By lsn · repeats dropped</p>
+    <div class="cols cols-32 gap-s mid">
+      <div class="evts">
+        <div class="evt"><b>lsn 5006670</b><span>17:15 · email changed</span></div>
+        <div class="evt"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div>
+      </div>
+      <div class="rec good"><b>our copy · 100898</b><span>Jeddah · Al Hamra ✓</span></div>
+    </div>
+    <div class="cols cols-2 gap-s mt-s">
+      <div class="callout warn s">Exactly 1 of 7,442 customers in September’s feed, and no error.</div>
+      <div class="callout tip s">By lsn: 0 differences from the app.</div>
+    </div>
+  </div>
+  <div class="callout tip s mt-s frag" data-frag="lsn"><b>Trust the log position, not the arrival order.</b> Then repeats and late events do no harm.</div>
+  <aside class="notes">Step 1 of the build. The quiz answer, shown: apply the three after images in arrival order and the stale 17:15 row is the last one written. Press for step 2. Customer 100898 is the only customer in September’s feed whose last arrival is not their last change, which is exactly why this bug survives testing: the totals look right and nothing fails. Lab 1.4 task 3’s reconciliation catches it (missing 1, extra 1). In the lab, try it: rebuild latest ordered by arrival and rerun the check.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Latest per key">
+  <div class="kicker">05 / Latest per key</div>
+  <h2>Keep only the last change per customer</h2>
+  <p class="lead small">Applying changes needs one row per customer. Two steps get there.</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div>
+      <p class="kicker mb0">Feed · 6,346 events</p>
+      <div class="evts">
+        <div class="evt"><b>lsn 5006670</b><span>17:15 · email changed</span></div>
+        <div class="evt"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div>
+        <div class="evt bad"><b>lsn 5006670</b><span>17:15 · email changed, re-sent</span></div>
+      </div>
+    </div>
+    <div>
+      <p class="kicker mb0">Distinct lsn · 6,158</p>
+      <div class="evts">
+        <div class="evt"><b>lsn 5006670</b><span>17:15 · email changed</span></div>
+        <div class="evt"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div>
+      </div>
+    </div>
+    <div class="frag" data-frag="per">
+      <p class="kicker mb0">Per customer · 4,542</p>
+      <div class="evts">
+        <div class="evt"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div>
+      </div>
+    </div>
+  </div>
+  <pre class="code s mt-s"><code class="language-sql">SELECT DISTINCT ON (lsn) * FROM changes</code></pre>
+  <div class="callout tip s mt-s"><b>Step 1: drop repeated events,</b> one per lsn. They are identical, so any copy may stay.</div>
+  <pre class="code s mt-s frag" data-frag="per"><code class="language-sql">QUALIFY row_number() OVER (PARTITION BY customer_id ORDER BY lsn DESC) = 1</code></pre>
+  <div class="callout warn s mt-s frag" data-frag="per">Skip it and DuckDB refuses: “MERGE INTO command cannot affect the same target row more than once”.</div>
+  <div class="callout tip s mt-s frag" data-frag="per"><b>Step 2: keep the highest lsn per customer.</b> Only the newest change decides the current row.</div>
+  <aside class="notes">Lab 1.4 task 2, first half. DISTINCT ON (lsn) keeps one row per lsn: redeliveries are identical, so it doesn’t matter which copy survives. 188 rows go. Press for the second half: row_number over each customer, newest lsn first, keeps one row per key. A delete has no after image, so the key comes from before: coalesce(after.customer_id, before.customer_id). The error on the slide is DuckDB 2.0’s real message when the source has two rows for one key: the next statement, MERGE, needs exactly one.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions</a></p></aside>
+</section>
+
+<section class="slide top" data-label="06 / MERGE">
+  <div class="kicker">06 / MERGE</div>
+  <h2>MERGE: apply each change to our copy</h2>
+  <p class="lead small">Match each customer’s latest change to our copy (the 1 September snapshot) on customer_id.</p>
+  <div class="cols cols-3 gap-s mid mt-s" style="grid-template-columns:1fr 1fr 1.3fr;row-gap:12px">
+    <p class="kicker mb0" style="grid-row:1;grid-column:1">Latest change</p>
+    <p class="kicker mb0" style="grid-row:1;grid-column:2">Our copy</p>
+    <div class="rec c-cyan" style="grid-row:2;grid-column:1"><b>100898 · u · lsn 5007086</b><span>Jeddah · Al Hamra</span></div>
+    <div class="rec" style="grid-row:2;grid-column:2"><b>customer 100898</b><span>Dammam · Al Nuzha</span><i>found</i></div>
+    <div class="rec c-cyan" style="grid-row:3;grid-column:1"><b>107371 · c · lsn 5107395</b><span>Khalid signs up · Riyadh · Al Malqa</span></div>
+    <div class="rec dim" style="grid-row:3;grid-column:2"><b>customer 107371</b><span>no row</span><i>not found</i></div>
+    <div class="rec c-cyan" style="grid-row:4;grid-column:1"><b>100710 · d · lsn 5051530</b><span>erased · after: null</span></div>
+    <div class="rec" style="grid-row:4;grid-column:2"><b>customer 100710</b><span>Riyadh · Al Naseem</span><i>found</i></div>
+    <div class="callout tip s" style="grid-row:5;grid-column:1/-1"><b>MERGE</b> starts by looking up each change’s key in the target: <b>found</b> or <b>not found</b>.</div>
+    <div class="rec good frag" data-frag="upd" style="grid-row:2;grid-column:3"><b>found → UPDATE</b><span>every column, from the after image</span><i>Jeddah · Al Hamra</i></div>
+    <div class="callout tip s frag" data-frag="upd" style="grid-row:6;grid-column:1/-1"><b>Found, and a change:</b> UPDATE the row with the event’s after image.</div>
+    <div class="rec good frag" data-frag="ins" style="grid-row:3;grid-column:3"><b>not found → INSERT</b><span>a new row: Khalid, from the introduction</span><i>Khalid · Riyadh</i></div>
+    <div class="callout tip s frag" data-frag="ins" style="grid-row:7;grid-column:1/-1"><b>Not found:</b> INSERT a new row. Update or insert by key is called an <b>upsert</b>.</div>
+    <div class="rec bad frag" data-frag="del" style="grid-row:4;grid-column:3"><b>found, op = d → DELETE</b><span>the row goes</span><i>row removed</i></div>
+    <div class="callout tip s frag" data-frag="del" style="grid-row:8;grid-column:1/-1"><b>Found, and a delete:</b> DELETE the row. One statement, three outcomes.</div>
+  </div>
+  <aside class="notes">A build: one customer per key press, one per outcome. Three real customers from the feed: 100898 (our move), Khalid 107371 from the introduction, who signed up on 26 September, and customer 100710, who was erased on 13 September. Our copy is the 1 September snapshot, so it has 100898 and 100710 but not Khalid. Ask the room what should happen to each before pressing on. First press: 100898 exists in the snapshot and its latest change is an update, so its row becomes Jeddah · Al Hamra. Every column is overwritten, not only the city: the after image is the whole row. Second press: Khalid signed up on 26 September, after the snapshot, so the feed holds a create event (op c) and our copy has no row: MERGE inserts it. Two days later comes order 5043883, the introduction’s order. dlt’s merge disposition in D1_3 was this same upsert. Third press: customer 100710 changed district and mobile number on 6 September and was erased on 13 September. Only the latest change matters for the current state, and it is the delete, so the earlier updates are never applied. An updated_at query would never have seen this delete.<p class="small">Sources: <a href="https://duckdb.org/docs/stable/sql/statements/merge_into">DuckDB MERGE INTO</a> · <a href="00_intro.html">course introduction</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / MERGE">
+  <div class="kicker">06 / MERGE</div>
+  <h2>All of September in one statement</h2>
+  <p class="lead small">The same three branches, run on every customer’s latest change.</p>
+  <table class="t small mt-s">
+    <tr><th colspan="2">MERGE INTO customers USING latest USING (customer_id)</th></tr>
+    <tr><th></th><th class="num">customers</th></tr>
+    <tr><td><code>WHEN MATCHED AND op = 'd' THEN DELETE</code></td><td class="num">139</td></tr>
+    <tr><td><code>WHEN MATCHED THEN UPDATE SET …</code></td><td class="num">2,862</td></tr>
+    <tr><td><code>WHEN NOT MATCHED AND op &lt;&gt; 'd' THEN INSERT …</code></td><td class="num">1,521</td></tr>
+  </table>
+  <p class="mt-s center mb0"><b>6,060</b> in the snapshot − <b>139</b> + <b>1,521</b> = <b>7,442</b> ✓ the app’s count today</p>
+  <div class="callout note s mt-s">20 customers signed up and were erased within September: not found, op = d, so nothing to do.</div>
+  <div class="callout tip s mt-s">Run it twice on the same changes: the second run changes nothing.</div>
+  <div class="callout tip s mt-s"><b>MERGE</b> updates, inserts and deletes by key, in one statement. DuckDB, Spark, Iceberg, Snowflake and BigQuery all run it.</div>
+  <aside class="notes">The branches are checked top to bottom for each source row. The counts are Lab 1.4’s: of 4,542 latest changes, 139 delete a snapshot row, 2,862 update one, 1,521 insert a new customer, and 20 are deletes of customers created during September, which no branch matches. Run twice on the same batch, the MERGE changes nothing the second time: it is idempotent, so a re-run after a failure is safe.<p class="small">Sources: <a href="https://duckdb.org/docs/stable/sql/statements/merge_into">DuckDB MERGE INTO</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="07 / Reconcile">
+  <div class="kicker">07 / Reconcile</div>
+  <h2>Did we get it right? Compare with the app</h2>
+  <p class="lead small">Every column of every row, in both directions.</p>
+  <div class="cols cols-3 gap-s mid mt">
+    <div class="card c-navy"><h4>app.customers</h4><p class="small">the app database, 30 September</p><p class="mb0">rows <b>7,442</b></p></div>
+    <ul class="bullets tight small">
+      <li><b>✓</b> rows: 7,442 = 7,442</li>
+      <li><b>✓</b> missing (app EXCEPT copy): 0</li>
+      <li><b>✓</b> extra (copy EXCEPT app): 0</li>
+    </ul>
+    <div class="card c-teal"><h4>Our copy</h4><p class="small">snapshot + MERGE</p><p class="mb0">rows <b>7,442</b></p></div>
+  </div>
+  <div class="callout warn s mt-s">Order by arrival instead: missing 1, extra 1. It’s customer 100898.</div>
+  <div class="callout note s mt-s">Equal counts aren’t enough: both orders give 7,442 rows.</div>
+  <div class="callout tip s mt-s"><b>Reconcile:</b> compare the copy with its source, row by row. The one test that catches 100898.</div>
+  <aside class="notes">Lab 1.4 task 3: EXCEPT compares whole rows, so one wrong column in one row shows up as one missing and one extra. Equal counts alone would have passed: 7,442 rows either way. In production the same check runs on a schedule against a live source, so it compares as of the same lsn. D2_2 reconciles the fact table the same way.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="08 / History">
+  <div class="kicker">08 / History</div>
+  <h2>Marketing asks: how much did Dammam customers spend?</h2>
+  <p class="lead small">Each order counted by where its customer lived at the time. Order 5019534 is customer 100898’s, from 27 August.</p>
+  <p class="mb0 small"><span class="pill c-purple">Marketing</span> “Spend by customer city?”</p>
+  <div class="cols cols-3 gap-s mid mt-s">
+    <div class="rec"><b>order 5019534</b><span>27 Aug · DMM-01, Dammam · delivered</span><i>98.44</i></div>
+    <div class="center"><code>JOIN ON customer_id</code></div>
+    <div class="rec bad"><b>our copy · 100898</b><span>Jeddah · Al Hamra</span></div>
+  </div>
+  <div class="callout warn s mt-s">98.44 SAR from a Dammam customer, counted as Jeddah.</div>
+  <div class="callout tip s mt-s">Joined to our copy, <b>a Dammam customer’s order counts as Jeddah:</b> that is where 100898 lives now.</div>
+  <div class="cols cols-2 gap-s mt-s frag" data-frag="gone">
+    <div class="rec dim"><b>customer 100898 · before 17:15</b><span>Dammam · Al Nuzha · icloud email</span></div>
+    <div class="rec dim"><b>customer 100898 · before 18:49</b><span>Dammam · Al Nuzha · yahoo email</span></div>
+  </div>
+  <div class="callout note s mt-s frag" data-frag="gone">MERGE overwrote these rows. The answer was in them.</div>
+  <div class="callout tip s mt-s frag" data-frag="gone"><b>MERGE keeps only now.</b> Questions about the past need the versions it overwrote.</div>
+  <aside class="notes">Order 5019534 is real: delivered on 27 August from DMM-01, 98.44 SAR. Joined to the current-state copy, it counts toward Jeddah customers, because that’s where the customer lives today. Sometimes that’s the right question (“where do our customers live now?”). For “how much did Dammam customers spend?”, we need the city they lived in when they ordered. If someone asks “why not use the store?”: the store answers where we sold, which is a different question. In September, 10% of delivered orders (2,173 of 21,005) came from a store in a different city from the one the customer lived in. Press: our copy went through the same overwrites as the app. The 1 September row, Dammam, is exactly what marketing needs for an August order, and the MERGE replaced it.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide top" data-label="09 / History">
+  <div class="kicker">09 / History</div>
+  <h2>Keep every version instead</h2>
+  <p class="lead small">Add a row for each change. A version is valid from its change until the next one.</p>
+  <div class="cols cols-3 mt-s" style="gap:10px 24px">
+    <div style="grid-row:1;grid-column:1">
+      <p class="kicker mb0">version 1</p>
+      <div class="rec"><b>Dammam · Al Nuzha</b><span>from 2025-08-14 04:31<br>to <span class="vto vto1"><span class="was">null · current</span><span class="now">2026-09-02 17:15</span></span></span></div>
+      <p class="xsmall muted mb0 mt-s">From the 1 September snapshot. Nothing has changed it yet.</p>
+    </div>
+    <div class="callout tip s" style="grid-row:2;grid-column:1/-1">Version 1 comes from the snapshot. While nothing changes it, it is the <b>current</b> version.</div>
+    <div class="frag" data-frag="v2" style="grid-row:1;grid-column:2">
+      <p class="kicker mb0">version 2</p>
+      <div class="rec"><b>Dammam · Al Nuzha</b><span>from 2026-09-02 17:15<br>to <span class="vto vto2"><span class="was">null · current</span><span class="now">2026-09-02 18:49</span></span></span></div>
+      <p class="xsmall muted mb0 mt-s"><b>lsn 5006670</b> · 17:15 · email changed. Same city: only the email changed.</p>
+    </div>
+    <div class="callout tip s frag" data-frag="v2" style="grid-row:3;grid-column:1/-1">A change <b>closes</b> the current version and <b>opens</b> a new one.</div>
+    <div class="frag" data-frag="v3" style="grid-row:1;grid-column:3">
+      <p class="kicker mb0">version 3</p>
+      <div class="rec good"><b>Jeddah · Al Hamra</b><span>from 2026-09-02 18:49<br>to null · current</span></div>
+      <p class="xsmall muted mb0 mt-s"><b>lsn 5007086</b> · 18:49 · Dammam → Jeddah</p>
+    </div>
+    <div class="callout tip s frag" data-frag="v3" style="grid-row:4;grid-column:1/-1"><b>Three versions,</b> and exactly one is valid at any moment.</div>
+    <pre class="code s frag" data-frag="v3" style="grid-row:5;grid-column:1/-1"><code class="language-sql">valid_to = lead(valid_from) OVER (PARTITION BY customer_id ORDER BY lsn)</code></pre>
+    <div class="callout note s frag" data-frag="v3" style="grid-row:6;grid-column:1/-1">Each version ends where the next begins: no gaps, no overlaps. Ordered by lsn, so arrival order can’t spoil it.</div>
+  </div>
+  <aside class="notes">A build of Lab 1.4 task 4. Snapshot rows become the first versions, valid from their updated_at: 100898 signed up on 14 August 2025 and hadn’t changed since. valid_to null means current. First press: the 17:15 event starts version 2 at its commit time, and version 1 now ends there. Version 2 has the same city, because the change was to the email: an SCD2 row records every change, not only the ones a report cares about. Second press: lead() over lsn closes each version where the next begins, so out-of-order arrival doesn’t matter, and the duplicate was already dropped. A delete closes the last version and starts nothing.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / History">
+  <div class="kicker">09 / History</div>
+  <h2>A slowly changing dimension</h2>
+  <p class="lead small">A dimension describes things, such as customers. Its rows change now and then. How much history to keep is a choice.</p>
+  <div class="cols cols-32 gap-s mt">
+    <table class="t small">
+      <tr><th colspan="3">Slowly changing dimensions (SCD)</th></tr>
+      <tr><th>type</th><th>keeps</th><th>answers</th></tr>
+      <tr><td>0</td><td>the first value</td><td>city at sign-up</td></tr>
+      <tr><td>1</td><td>the latest value: our MERGE copy</td><td>city now</td></tr>
+      <tr class="hl"><td><b>2</b></td><td><b>a row per version</b></td><td><b>city at order time</b></td></tr>
+    </table>
+    <div class="stack dense">
+      <div class="stat"><div class="big">12,059</div><div class="lbl">versions for 7,601 customers</div></div>
+      <div class="stat"><div class="big">7,442</div><div class="lbl">current: one per live customer ✓</div></div>
+    </div>
+  </div>
+  <div class="callout tip s mt-s">Many teams keep Type 1 and Type 2 side by side.</div>
+  <div class="callout note s mt-s">Dimensions return on Day 2, when we model the warehouse.</div>
+  <div class="callout tip s mt-s"><b>SCD Type 2:</b> one row per version, with valid_from and valid_to. Type 1 is our MERGE copy.</div>
+  <aside class="notes">Lab 1.4 task 4’s counts: 12,059 versions for 7,601 customers (the 159 erased customers have versions but no current one), and 7,442 current rows, one per customer in the app. Type 0 never changes (the sign-up city); Type 1 overwrites (the copy we built with MERGE); Type 2 keeps every version. The choice can differ per column: history for city, overwrite for a typo in a name.<p class="small">Sources: <a href="https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/type-2/">Kimball: SCD Type 2</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / As-of join">
+  <div class="kicker">09 / As-of join</div>
+  <h2>Join each order to the version valid at its time</h2>
+  <p class="lead small">Order 5019534 was placed on 27 August. Which of customer 100898’s versions was valid then?</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div><p class="kicker mb0">version 1</p><div class="rec good"><b>Dammam · Al Nuzha</b><span>from 2025-08-14 04:31<br>to 2026-09-02 17:15</span></div></div>
+    <div><p class="kicker mb0">version 2</p><div class="rec"><b>Dammam · Al Nuzha</b><span>from 2026-09-02 17:15<br>to 2026-09-02 18:49</span></div></div>
+    <div><p class="kicker mb0">version 3</p><div class="rec"><b>Jeddah · Al Hamra</b><span>from 2026-09-02 18:49<br>to null · current</span></div></div>
+  </div>
+  <div class="cols cols-12 gap-s mid mt-s">
+    <div class="rec"><b>order 5019534</b><span>27 Aug · DMM-01, Dammam · delivered</span><i>98.44</i></div>
+    <div class="callout tip s"><b>✓ Dammam.</b> 27 August falls inside version 1: 100898 lived in Dammam then.</div>
+  </div>
+  <pre class="code s mt-s"><code class="language-sql">ON o.customer_id = v.customer_id AND o.created_at &gt;= v.valid_from
+AND (o.created_at &lt; v.valid_to OR v.valid_to IS NULL)</code></pre>
+  <div class="callout tip s mt-s"><b>As-of join:</b> match each event to the version that was valid when it happened.</div>
+  <aside class="notes">Order 5019534 (27 August) falls inside version 1, so the as-of join gives Dammam, where the customer lived then. The join condition is on the slide: the order time must be at or after the version’s start and before its end, or the version must still be open.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / As-of join">
+  <div class="kicker">09 / As-of join</div>
+  <h2>Marketing gets two answers, both correct</h2>
+  <p class="lead small">September’s delivered revenue by customer city, at order time and by current city (SAR).</p>
+  <div class="cols cols-12 gap-s mid mt">
+    <div class="card c-purple"><h4>Marketing</h4><p class="small mb0">“Which one do I report?”</p></div>
+    <table class="t small">
+      <tr><th colspan="4">September revenue by customer city</th></tr>
+      <tr><th>city</th><th class="num">at order time</th><th class="num">current city</th><th class="num">diff</th></tr>
+      <tr><td>Dammam</td><td class="num">625,733</td><td class="num">661,985</td><td class="num">+5.8%</td></tr>
+      <tr><td>Jeddah</td><td class="num">1,024,139</td><td class="num">1,028,157</td><td class="num">+0.4%</td></tr>
+      <tr><td>Riyadh</td><td class="num">1,680,589</td><td class="num">1,640,319</td><td class="num">−2.4%</td></tr>
+    </table>
+  </div>
+  <div class="callout note s mt-s">650 customers moved city in September. The total stays 3,330,461 SAR; only the split moves.</div>
+  <div class="callout tip s mt-s">If campaign budgets are split by customer city, a few percent is real money.</div>
+  <div class="callout tip s mt-s"><b>As-of:</b> where customers lived when they ordered. <b>Current:</b> where they live now. Where we sold comes from the store.</div>
+  <aside class="notes">Lab 1.4 task 5. The totals are equal (3,330,461 SAR); 650 movers shift money between cities. Which number is right depends on the question, so the model should offer both. Orders of erased customers fall out of both joins: Day 2’s star schema keeps them with an Unknown row.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="10 / Erasure">
+  <div class="kicker">10 / Erasure</div>
+  <h2>Compliance asks: is customer 100710 gone?</h2>
+  <p class="lead small">Customer 100710 asked to be erased; the app deleted the row on 13 September. Our history still has it.</p>
+  <p class="mt mb0"><span class="pill c-coral">Compliance</span> “Erased everywhere?”</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div><p class="kicker mb0">version 1</p><div class="rec"><b>Riyadh · Al Naseem</b><span>mobile 05•••••868<br>to 2026-09-06 11:38</span></div></div>
+    <div><p class="kicker mb0">version 2</p><div class="rec"><b>Riyadh · Al Yasmin</b><span>mobile 05•••••868<br>to 2026-09-06 22:07</span></div></div>
+    <div><p class="kicker mb0">version 3 · closed by the delete</p><div class="rec bad"><b>Riyadh · Al Yasmin</b><span>mobile 05•••••360<br>to 2026-09-13 02:32</span></div></div>
+  </div>
+  <div class="callout warn s mt-s"><b>Closed, not gone:</b> three rows still hold the old mobile numbers.</div>
+  <div class="callout tip s mt-s"><b>A delete closes the last version.</b> The older versions still hold personal data.</div>
+  <ul class="bullets tight small frag" data-frag="fix" style="margin-top:6px;margin-bottom:0">
+    <li><b>DELETE</b> every version of every erased customer: 200 versions, 159 customers</li>
+    <li><b>and</b> in the bronze feed and in old snapshots (Lab 4.3)</li>
+    <li><b>✓</b> 11,859 versions remain: history kept for everyone else</li>
+  </ul>
+  <div class="callout tip s mt-s frag" data-frag="fix"><b>History meets erasure:</b> under the PDPL, erased means every version, every layer, every snapshot.</div>
+  <aside class="notes">Customer 100710 had three versions in September (a district move and a new mobile number, both on 6 September) and asked to be erased on 13 September. The SCD2 build closes the last version at the delete and keeps the rest: their old mobile numbers are still there. Press: the PDPL gives every data subject the right to have their data destroyed, so Lab 1.4 deletes every version of the 159 erased customers. The change feed in bronze holds the same data, and so do old snapshots: Lab 4.3 handles that on a lakehouse table.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="11 / The words">
+  <div class="kicker">11 / The words</div>
+  <h2>Ten words for change and history</h2>
+  <p class="lead small">Every one appeared on a slide today. The lab uses them all.</p>
+  <div class="cols cols-2 mt">
+    <ul class="bullets tight small">
+      <li><b>CDC</b> · learning every change a source makes</li>
+      <li><b>Log</b> · where the database writes each change first</li>
+      <li><b>lsn</b> · a change’s position in the log</li>
+      <li><b>Change event</b> · one change: op, before, after, lsn</li>
+      <li><b>At-least-once</b> · an event may arrive twice, or late</li>
+    </ul>
+    <ul class="bullets tight small">
+      <li><b>MERGE</b> · update, insert or delete by key</li>
+      <li><b>Reconcile</b> · prove the copy matches its source</li>
+      <li><b>Upsert</b> · update the row if the key exists, insert it if not</li>
+      <li><b>SCD Type 2</b> · one row per version, valid_from to valid_to</li>
+      <li><b>As-of join</b> · join to the version valid at the time</li>
+    </ul>
+  </div>
+  <div class="callout tip s mt-s"><b>Order by lsn:</b> most of the other words depend on it.</div>
+  <aside class="notes">A reference slide: point at each word and ask the room which slide it appeared on, and what customer 100898 looked like there.</aside>
+</section>
+
+<section class="slide" data-label="12 / Recall">
+  <div class="kicker">12 / Recall</div>
+  <h2>Your turn: answer before you look</h2>
+  <p class="lead small">Five questions on today’s customers. Answer out loud, or with a neighbour; each key press shows an answer.</p>
+  <ol class="bullets tight small mt-s">
+    <li>Customer 100710 is deleted in the app. Why does a query on updated_at never see it?<div class="frag small muted">The row is gone, so no updated_at is left to find. Only the log records the delete.</div></li>
+    <li>100898’s events arrive as #333, #347 and #360. Which one sets the current row?<div class="frag small muted">lsn 5007086 (#347): the highest lsn once the repeat is dropped. Never simply the last arrival.</div></li>
+    <li>Khalid (107371) signed up on 26 September. Which MERGE branch handles that change?<div class="frag small muted">NOT MATCHED → INSERT: the 1 September snapshot has no row for 107371.</div></li>
+    <li>How many SCD2 versions does 100898 have, and which one is current?<div class="frag small muted">Three: two in Dammam, then Jeddah · Al Hamra from 2 Sep 18:49, with valid_to null.</div></li>
+    <li>Order 5019534 (27 Aug, DMM-01): which city does the as-of join give? The current join?<div class="frag small muted">As-of: Dammam, the version valid on 27 August. Current: Jeddah.</div></li>
+  </ol>
+  <div class="callout tip s mt-s frag"><b>Capture every change, order by lsn, MERGE the latest, keep the versions:</b> the whole session in one line. What you can recall now, you can use in the lab.</div>
+  <aside class="notes">About 3 minutes. Read each question, give the room 20–30 seconds, and take an answer before moving on. Don’t press until people have committed to an answer: the guess that turns out wrong is what makes the right answer stick. Each press shows one answer. Walk through any answer the room missed by going back to its slide: the three ways (6), arrival vs. lsn (9 to 11), MERGE (13 and 14), the versions (17) and the as-of join (19).</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 1.4">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 1.4 · 25 min</div>
+      <h2>From a CDC feed to an SCD2 dimension</h2>
+      <p class="lead small">Start from the 1 September snapshot, replay September’s changes, and end exactly where the app is.</p>
+      <div class="stack dense">
+        <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab · D1_4_cdc_merge_scd.ipynb</a>
+        <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions</a>
+        <a class="nb" href="https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-events">Further reading · Debezium change events</a>
+        <a class="nb" href="../index.html">Back to the course page</a>
+      </div>
+      <p class="small muted mt-s">Find customer 100898 in the feed during task 1.</p>
+      <div class="callout tip s mt-s"><b>Tomorrow, Day 2:</b> from bronze to silver.</div>
+    </div>
+    <ul class="checklist">
+      <li>Read the feed; find duplicates and late events <span class="min">4 min</span></li>
+      <li>Latest change per key; MERGE <span class="min">7 min</span></li>
+      <li>Reconcile with the app (0 differences) <span class="min">4 min</span></li>
+      <li>Build the SCD2 history <span class="min">7 min</span></li>
+      <li>As-of join: revenue by city at order time <span class="min">3 min</span></li>
+      <li class="stretch">Stretch: make the MERGE incremental: the feed in 4 batches</li>
+    </ul>
+  </div>
+  <aside class="notes">Hand over to the lab. Suggest finding customer 100898 in the feed during task 1, and trying the arrival-order MERGE in task 3 to see the one difference appear. The stretch task shows why real CDC sinks remember deletes: a delete in an early batch, followed by an older update in a later batch, re-inserts the customer unless the sink remembers the delete’s lsn.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb">Lab 1.4 notebook</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions</a></p></aside>
+</section>
+
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

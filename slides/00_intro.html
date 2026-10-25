@@ -1,7 +1,426 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Course introduction · Modern Data Engineering</title>
-<link rel="icon" href="../assets/img/academy.svg"><link rel="stylesheet" href="../assets/story/story.css"></head>
-<body><main id="stage" aria-label="Course introduction presentation"></main>
-<nav id="toolbar" aria-label="Presentation controls"><button id="previous" aria-label="Previous slide" title="Previous slide">←</button><button id="notes" aria-label="Show speaker notes" aria-expanded="false" title="Speaker notes (N)">N</button><button id="overview" aria-label="Slide overview" title="Overview (O)">▦</button><button id="fullscreen" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button><button id="next" aria-label="Next slide" title="Next slide">→</button></nav>
-<aside id="notes-panel" aria-label="Speaker notes"></aside><div id="live-status" aria-live="polite" aria-atomic="true"></div><script src="../assets/story/story.js"></script><script src="../assets/story/00_intro.js"></script></body></html>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 1 · Opening">
+
+<section class="slide title" data-label="Course introduction">
+  <div class="kicker">Modern Data Engineering · Course introduction</div>
+  <h1>Know the business before the tools</h1>
+  <p class="lead mt">One company. One order. Who needs what, and why.</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>4 teaching days + capstone day</span>
+    <span>16 labs on one synthetic company</span>
+    <span>Python · SQL · no Spark, dbt or Kafka needed</span>
+  </div>
+  <aside class="notes">About 30 minutes, then the setup check. Welcome everyone, introduce yourself and the TA. Quick poll: who writes SQL weekly? Who has scheduled a pipeline (cron, Airflow, anything)? Who has used Spark, dbt or Kafka? This deck is only about the business: the order process, what each step records, who needs which answer and how fast. Each slide makes one point. Every tool in the week answers one of these needs; where the data should live is the next deck. One real order, 5043883, runs through the deck.</aside>
+</section>
+
+<section class="slide" data-label="01 / The business">
+  <div class="kicker">01 / The business</div>
+  <h2>Qafila delivers groceries in 30 minutes</h2>
+  <p class="lead small">A fictional company in Riyadh, Jeddah and Dammam. Everything in this course happens there.</p>
+  <div class="flow mt">
+    <div class="step c-teal"><b>You order</b>a customer, in the app</div>
+    <div class="arrow">→</div>
+    <div class="step c-amber"><b>30 min</b>the promise</div>
+    <div class="arrow">→</div>
+    <div class="step c-purple"><b>It arrives</b>a courier, at the door</div>
+  </div>
+  <div class="cols cols-3 mt">
+    <div class="stat center"><div class="big">12</div><div class="lbl">dark stores</div></div>
+    <div class="stat center"><div class="big">356</div><div class="lbl">products</div></div>
+    <div class="stat center"><div class="big">750</div><div class="lbl">orders a day</div></div>
+  </div>
+  <div class="callout tip mt"><b>Quick commerce:</b> groceries delivered in minutes, from small stores close to the customer.</div>
+  <aside class="notes">Qafila is fictional and all its data is synthetic: no real company, no real person. It sells groceries through an app and promises delivery within 30 minutes. 12 dark stores (Riyadh 6, Jeddah 4, Dammam 2), 356 products, 45,766 orders over August and September 2026, about 750 a day. Ask the room: what has to go right for an order to arrive in 30 minutes?</aside>
+</section>
+
+<section class="slide" data-label="01 / One order">
+  <div class="kicker">01 / One order</div>
+  <h2>Step 1: Khalid orders</h2>
+  <p class="lead small">At 01:35 on 28 September, Khalid in Al Malqa, Riyadh, opens the app.</p>
+  <div class="cols cols-32 mid mt">
+    <div>
+      <p class="kicker" style="margin-bottom:8px">His basket · order 5043883</p>
+      <div class="stack dense">
+        <div class="rec"><b>1 × cucumbers</b><span>Sahra</span><i>4.74</i></div>
+        <div class="rec"><b>2 × Arabic coffee</b><span>Al Waha, 37.88 each</span><i>75.76</i></div>
+        <div class="rec c-amber"><b>delivery fee</b><span>&nbsp;</span><i>9.00</i></div>
+      </div>
+      <p class="mt-s"><b>to pay 89.50</b></p>
+    </div>
+    <div class="stack">
+      <div class="callout tip"><b>An order</b> is one basket.</div>
+      <div class="callout tip"><b>Each product</b> in it is an <b>order line</b>.</div>
+    </div>
+  </div>
+  <div class="callout note mt-s"><b>Order, order line:</b> one purchase, and one product inside it.</div>
+  <aside class="notes">Khalid is a synthetic customer. He signed up two days earlier; this is his first order. Two order lines: 1 × Sahra Cucumbers at 4.74 and 2 × Al Waha Arabic Coffee at 37.88, so items 80.50, plus a 9.00 delivery fee: 89.50. Store RUH-05, Qafila Al Naseem. The order line matters on Day 2, when we decide what one row of a table stands for.</aside>
+</section>
+
+<section class="slide" data-label="01 / One order">
+  <div class="kicker">01 / One order</div>
+  <h2>Four steps, four players: one order, step by step</h2>
+  <div class="flow mt">
+    <div class="step c-teal"><b>1 · Order</b>the customer<br><small>01:35 · ordered</small></div>
+    <div class="arrow frag" data-frag="pay">→</div>
+    <div class="step c-cyan frag" data-frag="pay"><b>2 · Pay</b>payment provider<br><small>01:35 · captured</small></div>
+    <div class="arrow frag" data-frag="pack">→</div>
+    <div class="step c-coral frag" data-frag="pack"><b>3 · Pick + pack</b>the dark store<br><small>01:46 · handed over</small></div>
+    <div class="arrow frag" data-frag="deliver">→</div>
+    <div class="step c-purple frag" data-frag="deliver"><b>4 · Deliver</b>a courier<br><small>01:54 · delivered</small></div>
+  </div>
+  <div class="stack dense mt">
+    <div class="callout tip frag" data-frag="pay"><b>Payment status:</b> captured means the money was taken. It can still change: a refund comes later. Not Qafila: a payment provider charges Khalid's card.</div>
+    <div class="callout tip frag" data-frag="pack"><b>Dark store:</b> a store built for delivery only, a small warehouse with no shoppers, only pickers. Qafila has 12, so every customer is close to one.</div>
+    <div class="callout tip frag" data-frag="deliver"><b>SLA</b> (service level agreement): the promise a team is measured against. Qafila's is 30 minutes; this order took <b>19 minutes</b> from order to door.</div>
+  </div>
+  <aside class="notes">Build this slide one step per key press; each press adds the next step of order 5043883. Step 2: real payment pay_9040078, 89.50 SAR by card, captured 20 seconds after the order. Qafila does not hold card details; the payment provider does and tells Qafila the result. Over two months 1,582 payment attempts failed; some captured payments were refunded later. Checking that the amount paid matches the order is reconciliation. Step 3: the order goes to the nearest dark store, RUH-05 Al Naseem; a picker collects the cucumbers and the coffee; a courier is assigned at 01:36 and collects the bag at 01:46. The dark store holds stock, so it is also where suppliers deliver. Step 4: the courier app reports each step: assigned 01:36, picked up 01:46, out for delivery 01:48, delivered 01:54:55. From the order at 01:35:37 that is 19.3 minutes, inside the 30-minute promise. Operations lives on this number: which stores and which hours miss it?</aside>
+</section>
+
+<section class="slide" data-label="01 / The process">
+  <div class="kicker">01 / The process</div>
+  <h2>Four steps, four players, every order</h2>
+  <p class="lead small">The same path about 750 times a day. This is Qafila's main business process.</p>
+  <table class="t mt">
+    <tr><th>Step</th><th>Player</th><th>Where it happens</th><th class="num">Order 5043883</th></tr>
+    <tr><td><b>1 · Order</b></td><td>the customer</td><td>the Qafila app</td><td class="num">01:35 ordered</td></tr>
+    <tr><td><b>2 · Pay</b></td><td>a payment provider</td><td>another company's system</td><td class="num">01:35 paid</td></tr>
+    <tr><td><b>3 · Pick + pack</b></td><td>the dark store team</td><td>RUH-05 Al Naseem</td><td class="num">01:46 handed over</td></tr>
+    <tr><td><b>4 · Deliver</b></td><td>a courier</td><td>on the road, in the courier app</td><td class="num">01:54 delivered</td></tr>
+  </table>
+  <div class="callout tip mt"><b>Business process:</b> the repeatable steps a company follows to serve a customer.</div>
+  <aside class="notes">One picture of the whole flow. Each step has a different player: the customer in the app, a payment provider, the dark store team, a courier. Ask which step fails most often, and who would notice first. Keep this picture: on the next slides we look behind it (suppliers, customers), then at what each step writes down.</aside>
+</section>
+
+<section class="slide" data-label="01 / Behind the shelf">
+  <div class="kicker">01 / Behind the shelf</div>
+  <h2>Suppliers fill the shelves, at a cost</h2>
+  <p class="lead small">Every week each supplier sends Qafila its new prices.</p>
+  <div class="flow mt">
+    <div class="step c-amber"><b>Supplier</b>a price list every week</div>
+    <div class="arrow">→ restocks →</div>
+    <div class="step c-coral"><b>Dark store</b>RUH-05 Al Naseem</div>
+  </div>
+  <div class="cols cols-3 mid mt">
+    <div class="stat center"><div class="big">37.88</div><div class="lbl">Qafila sells the coffee for</div></div>
+    <div class="stat center"><div class="big">− 29.87</div><div class="lbl">the supplier charges</div></div>
+    <div class="stat center"><div class="big" style="color:var(--teal)">= 8.01</div><div class="lbl">left for Qafila</div></div>
+  </div>
+  <div class="callout tip mt"><b>Margin:</b> what we sell for, minus what it cost us. The price and the cost come from different places.</div>
+  <aside class="notes">Real numbers: Al Waha Arabic Coffee sells for 37.88 in the app; SUP-DATES-QSM charges 29.87 in its W39 price list (valid from 21 September). The margin on one pack is 8.01. The purchasing team watches margins: when a supplier raises a price, which products start losing money?</aside>
+</section>
+
+<section class="slide" data-label="01 / Customers">
+  <div class="kicker">01 / Customers</div>
+  <h2>A customer is more than one order</h2>
+  <p class="lead small">Khalid signed up on 26 September and ordered two days later. Customers keep changing after that.</p>
+  <div class="flow mt">
+    <div class="step c-teal"><b>signs up</b>Khalid: 26 Sep</div><div class="arrow">→</div>
+    <div class="step c-teal"><b>orders</b>Khalid: 28 Sep</div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>reviews</b>stars and a comment</div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>edits profile</b>new mobile, district</div><div class="arrow">→</div>
+    <div class="step c-coral"><b>erasure request</b>a right under the PDPL</div>
+  </div>
+  <p class="mt center">In September: <b>1,541</b> sign-ups · <b>4,458</b> profile edits · <b>159</b> erasure requests</p>
+  <div class="callout note"><b>Personal data:</b> anything that identifies a person, like a name, a mobile or a national ID. The PDPL protects it.</div>
+  <div class="callout tip mt-s"><b>Customers change</b> after they sign up: profiles move, reviews arrive, some ask to be forgotten.</div>
+  <aside class="notes">Khalid's own story is short: signed up 26 September 12:51, first order 28 September. Other customers show the rest: in September 1,541 signed up, 4,458 profile edits happened and 159 customers asked to be erased (counted from the change feed in Lab 1.4). Reviews come in Arabic and English. PDPL is Saudi Arabia's Personal Data Protection Law: it limits who may see personal data and gives people the right to have it destroyed.</aside>
+</section>
+
+<section class="slide" data-label="02 / The records">
+  <div class="kicker">02 / The records</div>
+  <h2>Every step leaves a record</h2>
+  <p class="lead small">Each player writes down what it did, in its own system.</p>
+  <div class="cols cols-3 gap-s mt">
+    <div class="card c-teal"><h4>order</h4><p class="small mb0">in the app database</p></div>
+    <div class="card c-cyan"><h4>payment</h4><p class="small mb0">from the payment provider</p></div>
+    <div class="card c-purple"><h4>delivery events</h4><p class="small mb0">sent by the courier app, one per step</p></div>
+    <div class="card c-teal"><h4>customer changes</h4><p class="small mb0">sign-ups, edits, erasures</p></div>
+    <div class="card c-coral"><h4>reviews</h4><p class="small mb0">written in the app</p></div>
+    <div class="card c-amber"><h4>price lists</h4><p class="small mb0">a CSV file from each supplier, every week</p></div>
+  </div>
+  <div class="callout tip mt"><b>Source system:</b> software that runs one part of the business and records what happens as it goes.</div>
+  <aside class="notes">The order lane again; now look under it. The app database records the order, the payment provider records the payment, the courier app sends an event for each delivery step. Beside the order: customer changes, reviews and the suppliers' weekly price files. Six records in five systems, each owned by a different team, each with its own format and clock (the app database writes UTC, the courier app Riyadh time). In the data: 45,766 orders, 41,785 payment records, 22,518 delivery events, 6,346 customer changes, 3,000 reviews, 4 weekly price files. The problems hidden in them are Lab 1.1's exercise: do not open data/raw/DATA_ISSUES.txt before it.</aside>
+</section>
+
+<section class="slide" data-label="02 / The records">
+  <div class="kicker">02 / The records</div>
+  <h2>Some records keep now, others keep what happened</h2>
+  <div class="cols cols-2 mt">
+    <div>
+      <h4>App database</h4>
+      <div class="rec"><b>order 5043883</b><span>status: delivered</span></div>
+      <p class="small muted mt-s">Only the latest status. Each change overwrote the one before.</p>
+      <p class="mt-s"><b>State</b> · how things are now</p>
+    </div>
+    <div>
+      <h4>Courier app</h4>
+      <div class="stack dense">
+        <div class="rec"><b>01:36 assigned</b><span>courier CR-RIY-076</span></div>
+        <div class="rec"><b>01:46 picked up</b><span>leaves RUH-05</span></div>
+        <div class="rec"><b>01:48 out for delivery</b><span>on the road</span></div>
+        <div class="rec"><b>01:54 delivered</b><span>at the door</span></div>
+      </div>
+      <p class="mt-s"><b>Events</b> · what happened, and when</p>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>State or events:</b> most sources keep only the state. History survives only where someone records events.</div>
+  <aside class="notes">The same order, as the app database and the courier app record it. The app database keeps one row per order, and every new status overwrote the old one: it now says delivered, nothing more. The courier app is the opposite: each step is a new event, kept in time order. Both are normal. Day 1 copies state and turns its changes into events (CDC, D1_4); Day 3 processes events as they arrive (D3_3).</aside>
+</section>
+
+<section class="slide" data-label="02 / A learner decision">
+  <div class="kicker">02 / A learner decision</div>
+  <h2>Operations asks: when was the bag picked up?</h2>
+  <div class="quiz">
+    <p class="lead">Order 5043883. Where do you look?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">The order's row in the app database</div>
+      <div class="opt" data-k="B" data-ok>The delivery events from the courier app</div>
+      <div class="opt" data-k="C">The payment record</div>
+    </div>
+    <div class="callout tip why"><b>Yes:</b> the picked_up event, 01:46. The order row now says only "delivered", and the payment knows only money. The current state cannot tell you about the past; only a record of what happened can.</div>
+  </div>
+  <aside class="notes">Allow 30 seconds; ask the room to say why the other two cannot answer it. B is right: the picked_up event at 01:46. A is the common wrong answer: people expect the app database to hold everything, but its row says only delivered. C knows only money. The lesson for the week: if a question is about history, we must keep the history, because most sources do not.</aside>
+</section>
+
+<section class="slide" data-label="02 / The records">
+  <div class="kicker">02 / The records</div>
+  <h2>One order, four tables, one key</h2>
+  <div class="cols cols-2 gap-s mt">
+    <div>
+      <table class="t small">
+        <tr><th colspan="4">orders <span class="muted">· app database · 45,766 rows</span></th></tr>
+        <tr><th>order_id</th><th>status</th><th>customer_id</th><th>store_id</th></tr>
+        <tr><td><b>5043883</b></td><td>delivered</td><td>107371</td><td>RUH-05</td></tr>
+      </table>
+      <table class="t small mt-s">
+        <tr><th colspan="4">order_items <span class="muted">· app database · 172,545 rows</span></th></tr>
+        <tr><th>order_id</th><th>quantity</th><th>unit_price</th><th>product_id</th></tr>
+        <tr><td><b>5043883</b></td><td>1</td><td>4.74</td><td>1104</td></tr>
+        <tr><td><b>5043883</b></td><td>2</td><td>37.88</td><td>1193</td></tr>
+      </table>
+    </div>
+    <div>
+      <table class="t small">
+        <tr><th colspan="3">payments <span class="muted">· payment provider · 41,785 rows</span></th></tr>
+        <tr><th>payment_id</th><th>amount</th><th>order_id</th></tr>
+        <tr><td>pay_9040078</td><td>89.50</td><td><b>5043883</b></td></tr>
+      </table>
+      <table class="t small mt-s">
+        <tr><th colspan="3">delivery_events <span class="muted">· courier app · 22,518 rows</span></th></tr>
+        <tr><th>event_type</th><th>event_time</th><th>order_id</th></tr>
+        <tr><td>assigned</td><td>01:36:34</td><td><b>5043883</b></td></tr>
+        <tr><td>picked_up</td><td>01:46:49</td><td><b>5043883</b></td></tr>
+        <tr><td>out_for_delivery</td><td>01:48:20</td><td><b>5043883</b></td></tr>
+        <tr><td>delivered</td><td>01:54:55</td><td><b>5043883</b></td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>Key:</b> a column whose value names one row. Eight rows, one order_id: one order, two lines, one payment, four events.</div>
+  <aside class="notes">The record cards of the last slides, opened up: inside each system the records are rows in tables, and every row of this order carries its id. Inside each system a record is a row in a table: one row per order, per order line, per payment, per delivery event. Point at the counts: 45,766 orders but 172,545 lines, because an order has several lines. The payments and delivery events arrive as JSON lines files; they are shown here as rows, with a few columns each. Event times are Riyadh time on 28 September (the app writes UTC). order_id is the key of orders: one row each. In the other tables it repeats, once per line or event, and every row points back to the order. Ask: how many rows does order 5043883 have across the four tables? (Eight.) Whether every order has its payment and events is one of Lab 1.1's checks.</aside>
+</section>
+
+<section class="slide" data-label="02 / The records">
+  <div class="kicker">02 / The records</div>
+  <h2>Other keys name who and what</h2>
+  <p class="lead small">The order row does not repeat Khalid's name or the store's address. It stores their ids.</p>
+  <div class="cols cols-2 gap-s mt">
+    <div>
+      <table class="t small">
+        <tr><th colspan="4">orders</th></tr>
+        <tr><th>order_id</th><th>status</th><th>customer_id</th><th>store_id</th></tr>
+        <tr><td>5043883</td><td>delivered</td><td><b>107371</b></td><td><b>RUH-05</b></td></tr>
+      </table>
+      <table class="t small mt-s">
+        <tr><th colspan="4">order_items</th></tr>
+        <tr><th>order_id</th><th>quantity</th><th>unit_price</th><th>product_id</th></tr>
+        <tr><td>5043883</td><td>1</td><td>4.74</td><td><b>1104</b></td></tr>
+        <tr><td>5043883</td><td>2</td><td>37.88</td><td><b>1193</b></td></tr>
+      </table>
+      <div class="callout tip mt-s"><b>Join:</b> follow a key to the row it names.</div>
+    </div>
+    <div>
+      <table class="t small">
+        <tr><th colspan="3">customers <span class="muted">· 7,442 rows</span></th></tr>
+        <tr><th>customer_id</th><th>full_name</th><th>district</th></tr>
+        <tr><td><b>107371</b></td><td><span class="ar">خالد التميمي</span></td><td>Al Malqa</td></tr>
+      </table>
+      <table class="t small mt-s">
+        <tr><th colspan="2">stores <span class="muted">· 12 rows</span></th></tr>
+        <tr><th>store_id</th><th>name_en</th></tr>
+        <tr><td><b>RUH-05</b></td><td>Qafila Al Naseem</td></tr>
+      </table>
+      <table class="t small mt-s">
+        <tr><th colspan="2">products <span class="muted">· 356 rows</span></th></tr>
+        <tr><th>product_id</th><th>name_en</th></tr>
+        <tr><td><b>1104</b></td><td>Sahra Cucumbers</td></tr>
+        <tr><td><b>1193</b></td><td>Al Waha Arabic Coffee</td></tr>
+      </table>
+    </div>
+  </div>
+  <aside class="notes">Same map: the order stays on the left, and the right side fills with what the order points to. The details of a customer, a store or a product live once, in their own table; every order names them by id. Following an id to its row is a join, the operation behind almost every answer on the next slides. One detail worth showing: the line keeps the price Khalid paid (37.88), while the product row holds today's price (37.97). The line records what happened; the product row is state. Lab 1.1 checks these links, for example orders whose customer_id has no customer row.</aside>
+</section>
+
+<section class="slide" data-label="03 / Who needs what">
+  <div class="kicker">03 / Who needs what</div>
+  <h2>Every team asks its own question</h2>
+  <p class="lead small">Each question is about orders like Khalid's. Each key press shows the records a team needs.</p>
+  <div class="cols cols-3 gap-s mt">
+    <div class="card c-teal"><h4>Finance</h4><p class="small">How much did we earn yesterday, after refunds?</p><div class="frag"><span class="pill c-teal">order</span><span class="pill c-teal">payment</span></div></div>
+    <div class="card c-cyan"><h4>Operations</h4><p class="small">Which stores miss the 30 minutes?</p><div class="frag"><span class="pill c-cyan">order</span><span class="pill c-cyan">delivery events</span></div></div>
+    <div class="card c-amber"><h4>Purchasing</h4><p class="small">Which products lose margin?</p><div class="frag"><span class="pill c-amber">order lines</span><span class="pill c-amber">price lists</span></div></div>
+    <div class="card c-purple"><h4>Data science</h4><p class="small">How many orders tomorrow evening?</p><div class="frag"><span class="pill c-purple">order history</span><span class="pill c-purple">delivery events</span></div></div>
+    <div class="card c-coral"><h4>Compliance</h4><p class="small">Who may see Khalid's national ID?</p><div class="frag"><span class="pill c-coral">customer data</span><span class="pill c-coral">every copy</span></div></div>
+    <div class="callout tip frag"><b>Almost every answer joins records</b> that different systems wrote. Bringing them together is the data team's job.</div>
+  </div>
+  <aside class="notes">Five teams, one question each. Finance closes the books: revenue after refunds. Operations runs the dark stores and watches the 30-minute promise. Purchasing buys from suppliers and watches margins. Data science forecasts demand so stores have stock and couriers on shift. Compliance protects personal data under the PDPL. Ask the room for a sixth team (marketing: do new customers come back?). Then reveal the records each team needs, one team at a time: finance needs orders and payments; operations, orders and delivery events; purchasing, order lines and price lists; data science, months of orders and delivery times; compliance, wherever personal data sits, including every copy the data team makes. No question is answered by one system alone. How the data team brings the records together is the next deck.</aside>
+</section>
+
+<section class="slide" data-label="03 / How fast">
+  <div class="kicker">03 / How fast</div>
+  <h2>How old can the answer be?</h2>
+  <p class="lead small">Some teams need minutes. Others need yesterday, exact.</p>
+  <div class="flow mt">
+    <div class="step c-coral"><b>seconds</b>Fraud check<br><small>before the payment is captured</small></div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>minutes</b>Operations<br><small>orders about to miss 30 min</small></div><div class="arrow">→</div>
+    <div class="step c-navy"><b>hours</b>&nbsp;</div><div class="arrow">→</div>
+    <div class="step c-teal"><b>next morning</b>Finance<br><small>yesterday's numbers, exact</small></div><div class="arrow">→</div>
+    <div class="step c-amber"><b>next week</b>Purchasing<br><small>when the price lists arrive</small></div>
+  </div>
+  <div class="callout note mt"><b>Data science</b> is the odd one out: not fresh, but long. It needs months of history.</div>
+  <div class="callout tip mt-s"><b>Freshness:</b> how old an answer may be before it is useless. It decides between a nightly batch and a live stream.</div>
+  <aside class="notes">Walk the axis left to right. A fraud check must answer before the payment is captured: seconds. Operations must see orders about to miss 30 minutes while there is still time to act: minutes. Finance closes yesterday's numbers the next morning, exact. Purchasing reacts when the weekly price lists arrive. Data science needs long history rather than fresh data. A batch collects records and processes them on a schedule; a stream processes each event as it arrives. Most of the week is batch; Day 3 adds streaming.</aside>
+</section>
+
+<section class="slide" data-label="04 / The words">
+  <div class="kicker">04 / The words</div>
+  <h2>Twelve words for the week</h2>
+  <p class="lead small">Every deck and notebook uses them. You met each one today.</p>
+  <div class="cols cols-2 mt">
+    <ul class="bullets tight small">
+      <li><b>Business process</b> · the repeatable steps that serve a customer</li>
+      <li><b>Order line</b> · one product inside an order</li>
+      <li><b>SLA</b> · the promise a team is measured against</li>
+      <li><b>Margin</b> · what we sell for, minus what it cost us</li>
+      <li><b>Personal data</b> · anything that identifies a person</li>
+      <li><b>Source system</b> · software that runs a step and records it</li>
+    </ul>
+    <ul class="bullets tight small">
+      <li><b>State</b> · a record of how things are now</li>
+      <li><b>Event</b> · a record of something that happened</li>
+      <li><b>Key</b> · a column whose value names one row</li>
+      <li><b>Join</b> · following a key to the row it names</li>
+      <li><b>Data consumer</b> · a team that asks questions of the data</li>
+      <li><b>Freshness</b> · how old an answer may be</li>
+    </ul>
+  </div>
+  <div class="callout tip mt"><b>The business first:</b> every tool this week helps one of these teams get its answer.</div>
+  <aside class="notes">A reference slide: point at each word and ask the room which slide it appeared on. Learners can come back to it during the week.</aside>
+</section>
+
+<section class="slide" data-label="05 / The week">
+  <div class="kicker">05 / The week</div>
+  <h2>Each day answers some of the questions</h2>
+  <p class="lead small">Five days, one platform for Qafila. Every lab adds a piece.</p>
+  <div class="cols cols-4 gap-s mt">
+    <div class="card c-teal"><h4>Day 1 · Land</h4><p class="small">copy every record in</p><span class="pill c-teal">for everyone</span></div>
+    <div class="card c-cyan"><h4>Day 2 · Model</h4><p class="small">exact, tested numbers</p><span class="pill c-cyan">Finance, Purchasing</span></div>
+    <div class="card c-coral"><h4>Day 3 · Scale</h4><p class="small">history and live events</p><span class="pill c-coral">Operations, Data science</span></div>
+    <div class="card c-purple"><h4>Day 4 · Operate</h4><p class="small">run, watched, protected</p><span class="pill c-purple">Compliance</span></div>
+  </div>
+  <div class="card c-amber mt"><h4>Day 5 · Capstone</h4><p class="small mb0">your team's platform, demoed: a working platform, a live demo, design decisions and technical Q&amp;A.</p></div>
+  <div class="callout note mt-s"><b>You should know</b> · Python, SQL (joins, GROUP BY), the command line, Git. No Spark, dbt, Kafka, cloud or Docker needed.</div>
+  <aside class="notes">Map each day to the teams it serves. Day 1 copies every source in, changes included: everyone depends on that copy. Day 2 cleans, models and tests: the exact numbers finance and purchasing need. Day 3 scales up into a lakehouse and adds streaming for operations, and the history data science needs. Day 4 runs it all on a schedule, watches it and protects personal data for compliance, and serves it to an AI assistant. Day 5: teams present a working platform with a live demo, design decisions and technical Q&amp;A. You leave with 16 working notebooks, a dbt project, a lakehouse and a capstone repo.</aside>
+</section>
+
+<section class="slide" data-label="05 / The week">
+  <div class="kicker">05 / The week</div>
+  <h2>Learn it, then build it</h2>
+  <p class="lead small">Two kinds of session. Both end in a lab on the Qafila data.</p>
+  <div class="cols cols-2 mt">
+    <div class="card c-navy"><h4>Concept sessions</h4><p class="small">a slide deck like this one, a quiz, then the lab</p><p class="small muted mb0">Parquet · CDC + SCD · modeling · streaming · streams into tables · contracts · governance · data for AI</p></div>
+    <div class="card c-teal"><h4>Tool sessions</h4><p class="small">no slides: we run the tool's walkthrough notebook together</p><p class="small muted mb0">DuckDB · dlt · Polars · dbt · Pandera · Iceberg · Spark · Dagster</p></div>
+  </div>
+  <div class="cols cols-3 gap-s mt">
+    <div class="callout note"><b>🤔 Predict, run, read.</b> Write your guess before you run the cell.</div>
+    <div class="callout note"><b>✏️ Fill the blanks.</b> Replace every ___, run the check: ✅</div>
+    <div class="callout note"><b>Solutions.</b> Every lab has one in labs/solutions/.</div>
+  </div>
+  <div class="callout tip mt-s"><b>Learn it, then build it:</b> a short deck or a notebook walkthrough, then about 25 minutes of lab.</div>
+  <aside class="notes">Concept sessions are taught from a deck like this one, because ideas such as grain, CDC and watermarks are pictures. Tool sessions have no slides: we run the tool's notebook together (the problem it solves, how it thinks, then its features one at a time). In every notebook: predict what a cell returns, run it, read why. Exercises are commented templates: replace every ___ and run the check cell until it shows ✅. Every lab and walkthrough has a solution in labs/solutions/. The course page links each session to its slides or notebook, its lab and the solution.</aside>
+</section>
+
+<section class="slide" data-label="05 / The week">
+  <div class="kicker">05 / The week</div>
+  <h2>Run the setup before you need it</h2>
+  <p class="lead small">Google Colab or your own laptop. One notebook checks everything.</p>
+  <div class="cols cols-2 mid mt">
+    <ol class="bullets">
+      <li><b>Open the repo</b> in Google Colab, or locally with uv</li>
+      <li><b>Run 00_setup_check.ipynb</b>: installs the packages, generates the data, tests every tool</li>
+      <li><b>In every notebook</b>: Setup first, Checkpoint questions last; ✱ Stretch cells are optional</li>
+    </ol>
+    <div>
+      <pre class="code s" data-file="terminal"><code class="language-bash">git clone https://github.com/SDAIAAcademy/data-engineering
+cd data-engineering/labs
+uv sync                        # creates .venv
+uv run python prepare_data.py  # data/raw/
+uv run jupyter lab</code></pre>
+      <p class="caption">The data is synthetic and the same for everyone: no real person's data; national IDs and IBANs are random.</p>
+    </div>
+  </div>
+  <div class="callout warn mt-s"><b>No Java on your laptop?</b> Run the Spark notebooks (tools/spark and Lab 3.2) on Colab: the notebook installs Java.</div>
+  <aside class="notes">Have everyone open the setup check now, on Colab or locally, while you take questions. prepare_data.py generates everything in data/raw/ from a fixed seed: identical data for everyone, offline, and no real personal data (national IDs and IBANs have valid check digits but are random). Every notebook runs on a laptop CPU except Spark, which needs Java 17+: run tools/spark and Lab 3.2 on Colab.<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_setup_check.ipynb">setup check</a> · <a href="https://github.com/SDAIAAcademy/data-engineering">repository</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / Recall">
+  <div class="kicker">06 / Recall</div>
+  <h2>Your turn: answer before you look</h2>
+  <p class="lead small">Five questions on the business. Answer out loud, or with a neighbour; each key press shows an answer.</p>
+  <ol class="bullets tight small mt">
+    <li>Name the four steps of a Qafila order, and who does each.<div class="frag small muted">Order (the customer, in the app), pay (a payment provider), pick + pack (the dark store), deliver (a courier).</div></li>
+    <li>What is Qafila's SLA, and did order 5043883 meet it?<div class="frag small muted">30 minutes from order to door. Yes: delivered in 19 minutes.</div></li>
+    <li>The coffee's margin: where do the two numbers come from?<div class="frag small muted">The price (37.88) from the app, the cost (29.87) from the supplier's weekly price list: 8.01.</div></li>
+    <li>When was the bag picked up, and which record says so?<div class="frag small muted">01:46, a delivery event from the courier app. The order's row says only "delivered".</div></li>
+    <li>Which team needs minutes, and which needs months of history?<div class="frag small muted">Operations (and the fraud check) need minutes or seconds. Data science needs months of history.</div></li>
+  </ol>
+  <div class="callout tip mt-s frag"><b>Steps, records, teams, freshness:</b> the whole introduction in one line. The business comes first; the tools follow from it.</div>
+  <aside class="notes">About 3 minutes. Read each question, give the room 20 seconds, take an answer, then press to reveal it and move on. Go back to the slide for any answer the room missed: the steps (3 to 5), the margin (6), the records, the quiz and the keys (8 to 12), freshness (14).</aside>
+</section>
+
+<section class="slide dark" data-label="Next · the story">
+  <div class="kicker">Next · the story</div>
+  <h2>The teams need the records together</h2>
+  <p class="lead">Where should Qafila keep them? Warehouse, lake or lakehouse: the next deck.</p>
+  <div class="cols cols-2 mt">
+    <div>
+      <h3>Up next</h3>
+      <p>The story: where Qafila keeps its records, and how order 5043883 travels from the app to a dashboard.</p>
+      <p>Then Session 1.1: DuckDB, the engine every lab runs on.</p>
+      <p class="small muted">Keep four questions in mind: what happened, where it was recorded, who needs it, how fresh.</p>
+    </div>
+    <div class="stack dense">
+      <a class="nb" href="00_story.html">The story · Warehouse, lake, lakehouse</a>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_setup_check.ipynb">Setup · 00_setup_check.ipynb</a>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Lab 0 · SQL window functions, if new</a>
+      <a class="nb" href="../index.html">Back to the course page</a>
+    </div>
+  </div>
+  <aside class="notes">Hand over to the story deck. It opens with finance and operations getting different revenue numbers from the same records, and ends with order 5043883's journey through the platform. The business is the map: every tool this week answers one of its questions.</aside>
+</section>
+
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

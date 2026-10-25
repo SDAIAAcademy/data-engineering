@@ -1,7 +1,482 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>D4_3 · Governance, security &amp; privacy · Modern Data Engineering</title>
-<link rel="icon" href="../assets/img/academy.svg"><link rel="stylesheet" href="../assets/story/story.css"></head>
-<body><main id="stage" aria-label="Governance, security and privacy presentation"></main>
-<nav id="toolbar" aria-label="Presentation controls"><button id="previous" aria-label="Previous slide" title="Previous slide">←</button><button id="notes" aria-label="Show speaker notes" aria-expanded="false" title="Speaker notes (N)">N</button><button id="overview" aria-label="Slide overview" title="Overview (O)">▦</button><button id="fullscreen" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button><button id="next" aria-label="Next slide" title="Next slide">→</button></nav>
-<aside id="notes-panel" aria-label="Speaker notes"></aside><div id="live-status" aria-live="polite" aria-atomic="true"></div><script src="../assets/story/story.js"></script><script src="../assets/story/D4_3_governance_privacy.js"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D4_3 · Governance, security and privacy · Modern Data Engineering</title>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 4">
+
+<section class="slide title" data-label="Governance and privacy">
+  <div class="kicker">Modern Data Engineering · Day 4</div>
+  <h1>Governance and privacy</h1>
+  <p class="lead mt">Khalid's national ID: who may see it, and how to forget it.</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>Day 4 · Session 3</span>
+    <span>Khalid, customer 107371</span>
+    <span>about 25 minutes, then Lab 4.3</span>
+  </div>
+  <aside class="notes">About 25 minutes for the slides, then Lab 4.3 (25 minutes). The introduction ended with five teams and their questions; Compliance's was "who may see Khalid's national ID?". Today we answer it with pipeline features: discovery, classification, pseudonymization, masked views and erasure. Khalid is customer 107371; his national ID, mobile and email are synthetic (valid check digits, random numbers), like all the course data. This is the engineering half of compliance: the classification levels and retention rules come from the organization's data protection officer, not from the data team. The session in one line: find personal data, classify it, protect it per role, and erase it for real when asked. <p class="small">Sources: <a href="00_intro.html">00_intro.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="00 / You are here">
+  <div class="kicker">00 / You are here</div>
+  <h2>Rules that apply to every stage</h2>
+  <p class="lead small">Personal data enters at the sources and is copied into every layer after them. Govern: who may see what, and for how long.</p>
+  <div class="pmap" style="grid-auto-rows:34px;margin-top:6px" data-here="govern" data-met="dlt,duckdb,cdc,parquet,polars,semantic,streaming,iceberg,dbt,ai,spark,pandera,contracts,dagster,observe"></div>
+  <div class="callout tip mt-s"><b>Governance is a platform feature:</b> one model can't protect data that every layer copies.</div>
+  <aside class="notes">The Govern band runs under the whole map, like Observe in D4_2. Khalid's row entered through the app database, travelled in the CDC feed (D1_4), landed in raw (D1_3) and staging (D2_3). Each copy needs the same rules. That is why masking, access and erasure are built into the platform, not into one dbt model. <p class="small">Sources: <a href="D1_4_cdc_scd.html">D1_4_cdc_scd.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="01 / The question">
+  <div class="kicker">01 / The question</div>
+  <h2>Compliance asks: who may see Khalid's national ID?</h2>
+  <p class="lead small">His row in raw.customers, exactly as the app stores it.</p>
+  <div class="cols cols-32 mid mt-s">
+    <table class="t small">
+      <tr><th colspan="2">customer 107371 <span class="muted">raw.customers</span></th></tr>
+      <tr><td>customer_id</td><td><code>107371</code></td></tr>
+      <tr><td>full_name</td><td><span class="ar">خالد التميمي</span></td></tr>
+      <tr><td>email</td><td><code>khalid.48@hotmail.com</code></td></tr>
+      <tr><td>mobile</td><td><code>966530730536</code></td></tr>
+      <tr class="hl"><td>national_id</td><td><code>1278681299</code></td></tr>
+      <tr><td>iban</td><td><code>null</code></td></tr>
+      <tr><td>city</td><td>Riyadh</td></tr>
+      <tr><td>district</td><td>Al Malqa</td></tr>
+    </table>
+    <div class="stack">
+      <div class="card flat c-teal"><h4>Khalid</h4><p class="small mb0">signed up 26 September</p></div>
+      <div class="card flat c-purple"><h4>Compliance</h4><p class="small mb0">"Who may see it?"</p></div>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>Personal data:</b> anything that identifies a person. Khalid's row has five columns of it.</div>
+  <aside class="notes">Khalid signed up on 26 September (D1_4 met him as the CDC feed's new customer) and placed order 5043883 two days later. The row has a name, an email, a mobile and a national ID; his IBAN is empty (2,652 of 7,442 customers saved one for refunds). City and district identify nobody on their own, but next to a name they do. The question is about people and purposes: support may need his mobile, Finance needs none of it, and an analyst counting customers needs to tell people apart without knowing who they are. <p class="small">Sources: <a href="00_intro.html">00_intro.html</a> · <a href="D1_4_cdc_scd.html">D1_4_cdc_scd.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="01 / The question">
+  <div class="kicker">01 / The question</div>
+  <h2>Khalid's ID is in six places already</h2>
+  <p class="lead small">Each layer copied the whole row. Backups and exports would add more.</p>
+  <div class="cols cols-3 gap-s mt-s">
+    <div class="rec bad"><b>App database</b><span>customers</span></div>
+    <div class="rec bad"><b>CDC feed</b><span>the c event, with after</span></div>
+    <div class="rec bad"><b>raw.customers</b><span>Lab 1.3</span></div>
+    <div class="rec bad"><b>stg_customers</b><span>dbt · all of it</span></div>
+    <div class="rec bad"><b>SCD2 history</b><span>Lab 1.4 · every version</span></div>
+    <div class="rec bad"><b>snapshots</b><span>Iceberg · old versions</span></div>
+  </div>
+  <div class="card flat c-teal mt-s"><h4>dim_customers · gold</h4><p class="small mb0">city, district, signup date; no name, mobile or ID. D2_2 left the identifiers out. The gold layer kept them out by design. Every layer before it did not.</p></div>
+  <div class="callout tip mt-s"><b>Copies multiply.</b> Every place that holds the ID must protect it, and must forget it on request.</div>
+  <aside class="notes">Trace one value: 1278681299 entered in the app, travelled in the CDC feed's after image (D1_4 warned about this), landed in raw.customers (Lab 1.3) and stg_customers (dbt keeps it there, for the person key), and in any SCD2 history built from the feed. If the customers table lives in Iceberg, old snapshots hold it too. The dimension in gold (D2_2, D2_3) deliberately has no identifiers: that is data minimization by design. Ask the room which of these copies an analyst can read today. <p class="small">Sources: <a href="D1_4_cdc_scd.html">D1_4_cdc_scd.html</a> · <a href="D2_2_modeling.html">D2_2_modeling.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / The rules">
+  <div class="kicker">02 / The rules</div>
+  <h2>PDPL and NDMO, from a data engineer's seat</h2>
+  <p class="lead small">The Personal Data Protection Law: in force since September 2023, fully enforced since September 2024. SDAIA is the regulator.</p>
+  <table class="t small mt-s">
+    <tr><th>The rule says</th><th>The pipeline does</th></tr>
+    <tr><td>know what personal data you hold</td><td>PII discovery, a catalog with a classification per column</td></tr>
+    <tr><td>collect and show only what the purpose needs</td><td>pseudonyms for analysts, masked views per role, gold without identifiers</td></tr>
+    <tr><td>honour data subjects' rights: access, correction, erasure</td><td>a deletion that reaches every copy, verified</td></tr>
+    <tr><td>keep transfers outside the Kingdom under control</td><td>storage region, backups and LLM endpoints inside approved locations</td></tr>
+    <tr><td>be able to show it</td><td>lineage, access logs, retention jobs</td></tr>
+  </table>
+  <div class="callout tip mt-s"><b>Each principle becomes a feature</b> you can build, test and show to an auditor.</div>
+  <aside class="notes">PDPL covers lawful purpose, data minimization, data subjects' rights (access, correction, destruction), breach notification and conditions on transfers outside the Kingdom. The NDMO data management and personal data protection standards add governance roles, a data catalog, data quality and the classification levels on the next slide. This slide is the engineering view, not legal advice: your DPO and your organization's policies decide what applies. <p class="small">Sources: <a href="https://bigid.com/blog/ndmo-framework-for-pdpl-compliance/">PDPL and the NDMO framework</a> · <a href="https://uniqus.com/a-comprehensive-overview-of-ndmo-compliance/">NDMO overview</a></p></aside>
+</section>
+
+<section class="slide" data-label="02 / Classify">
+  <div class="kicker">02 / Classify</div>
+  <h2>Four levels: Top Secret, Secret, Restricted, Public</h2>
+  <p class="lead small">The NDMO classification. Lab 4.3's illustrative Qafila policy puts Khalid's columns here.</p>
+  <div class="cols cols-32 mt-s">
+    <table class="t small">
+      <tr><th colspan="3">customer 107371 <span class="muted">raw.customers</span></th></tr>
+      <tr><td>customer_id</td><td><code>107371</code></td><td><b>Restricted</b></td></tr>
+      <tr><td>full_name</td><td><span class="ar">خالد التميمي</span></td><td><b>Restricted</b></td></tr>
+      <tr><td>email</td><td><code>khalid.48@hotmail.com</code></td><td><b>Restricted</b></td></tr>
+      <tr><td>mobile</td><td><code>966530730536</code></td><td><b>Restricted</b></td></tr>
+      <tr class="hl"><td>national_id</td><td><code>1278681299</code></td><td><em>Secret</em></td></tr>
+      <tr class="hl"><td>iban</td><td><code>null</code></td><td><em>Secret</em></td></tr>
+      <tr><td>city</td><td>Riyadh</td><td><b>Restricted</b></td></tr>
+      <tr><td>district</td><td>Al Malqa</td><td><b>Restricted</b></td></tr>
+    </table>
+    <div class="stack dense">
+      <table class="t small">
+        <tr><th colspan="2">Qafila's policy <span class="muted">Lab 4.3</span></th></tr>
+        <tr><td><em>Secret</em></td><td>pseudonymize; raw value only in a vault</td></tr>
+        <tr><td><b>Restricted</b></td><td>mask for everyone except support</td></tr>
+        <tr><td><b>Public</b></td><td>no personal data at all</td></tr>
+      </table>
+      <div class="callout note"><b>By association.</b> city next to a name identifies someone: Restricted "by association".</div>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>Classification drives handling:</b> the level decides who may read a column, and in what form.</div>
+  <aside class="notes">The four NDMO levels are Top Secret, Secret, Restricted and Public. The national ID (and an IBAN, when present) is Secret; the name, email and mobile are Restricted; and every other column of a table that holds personal data is Restricted too, because combined with the rest it identifies someone. Only tables without personal data can be Public. The policy is Lab 4.3's example: a real one comes from your organization, and is reviewed like code. <p class="small">Sources: <a href="https://uniqus.com/a-comprehensive-overview-of-ndmo-compliance/">NDMO overview</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Discovery">
+  <div class="kicker">03 / Discovery</div>
+  <h2>Column names lie</h2>
+  <p class="lead small">Personal data also hides in free text. Two of Lab 4.3's 400 support notes:</p>
+  <div class="cols cols-32 mid mt-s">
+    <div class="stack dense">
+      <div class="rec bad"><b>support_notes · note</b><span>Refund to SA7115564106233328540257 requested; identity checked against ID 1986655445.</span></div>
+      <div class="rec bad"><b>support_notes · note</b><span>Customer called from +966 56 474 3974 about a late order.</span></div>
+      <p class="mt-s">A column called <b>note</b> holds IBANs, national IDs, mobiles and emails.</p>
+    </div>
+    <div class="card c-cyan"><h4>Scan the values</h4><p class="small mb0">Look at what the cells contain, not at what the column is called.</p></div>
+  </div>
+  <div class="callout tip mt-s"><b>Discover by content:</b> scan the values, not the column names.</div>
+  <aside class="notes">Lab 4.3 generates 400 support notes from real customers' data, typed the way agents type: a refund to an IBAN, an identity check against a national ID, a callback number. Columns named notes, ref or extra_1 are where catalogs miss personal data. Discovery tools (Presidio, cloud DLP scanners, catalog classifiers) sample each text column and look for patterns. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a> · <a href="https://microsoft.github.io/presidio/">Presidio</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Discovery">
+  <div class="kicker">03 / Discovery</div>
+  <h2>A regex finds too much</h2>
+  <p class="lead small">Ten digits starting with 1 or 2 look like a national ID. So do the couriers' tracking numbers.</p>
+  <div class="cols cols-2 mid mt-s">
+    <div class="stack dense">
+      <div class="rec"><b>\b[12]\d{9}\b · in the 400 notes</b><span>83 candidates</span></div>
+      <div class="rec good"><b>… that pass the Luhn check</b><span>77 national IDs</span></div>
+      <div class="rec bad"><b>… that don't</b><span>6 tracking numbers</span></div>
+    </div>
+    <div class="stack">
+      <div class="callout tip"><b>Check digit.</b> A check digit tells a real ID from a random 10-digit number.</div>
+      <div class="callout note"><b>IBANs too.</b> IBANs have one too: ISO 13616, mod 97.</div>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>A pattern finds candidates; a checksum confirms them.</b> Fewer false alarms, more trust in the inventory.</div>
+  <aside class="notes">Real counts from Lab 4.3: the regex finds every 10-digit number that starts with 1 or 2 in the notes, including 10-digit courier tracking numbers. Saudi national IDs and Iqama numbers end with a Luhn check digit, so the validator keeps only the real ones. The same idea confirms an IBAN: SA plus 22 characters, rearranged and taken mod 97, must give 1. Some personal data has no pattern at all (names, addresses): declare it in the catalog instead. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="03 / Discovery">
+  <div class="kicker">03 / Discovery</div>
+  <h2>The Luhn check, on Khalid's ID</h2>
+  <p class="lead small">From the right: double every second digit, subtract 9 from results above 9, add everything up.</p>
+  <table class="t small">
+    <tr><td>national_id</td><td class="num"><b>1</b></td><td class="num"><b>2</b></td><td class="num"><b>7</b></td><td class="num"><b>8</b></td><td class="num"><b>6</b></td><td class="num"><b>8</b></td><td class="num"><b>1</b></td><td class="num"><b>2</b></td><td class="num"><b>9</b></td><td class="num"><b>9</b></td></tr>
+    <tr><td>every 2nd from the right</td><td class="num"><em>×2 = 2</em></td><td class="num">·</td><td class="num"><em>×2 = 14</em></td><td class="num">·</td><td class="num"><em>×2 = 12</em></td><td class="num">·</td><td class="num"><em>×2 = 2</em></td><td class="num">·</td><td class="num"><em>×2 = 18</em></td><td class="num">·</td></tr>
+    <tr class="frag"><td>above 9: subtract 9</td><td class="num"><em>2</em></td><td class="num">2</td><td class="num"><em>5</em></td><td class="num">8</td><td class="num"><em>3</em></td><td class="num">8</td><td class="num"><em>2</em></td><td class="num">2</td><td class="num"><em>9</em></td><td class="num">9</td></tr>
+  </table>
+  <div class="cols cols-2 mid mt-s">
+    <div class="stack dense">
+      <div class="callout note"><b>First digit.</b> 1 = a citizen, 2 = a resident (Iqama)</div>
+      <div class="callout note frag"><b>One wrong digit.</b> Change any one digit and the total stops being a multiple of 10.</div>
+    </div>
+    <div class="frag stat center"><div class="big">50</div><div class="lbl">a multiple of 10 ✓</div></div>
+  </div>
+  <div class="callout tip"><b>Luhn:</b> a check digit that catches any single wrong digit and most swapped pairs.</div>
+  <div class="callout tip frag"><b>Khalid's ID passes:</b> 9 + 9 + 2 + 2 + 8 + 3 + 8 + 5 + 2 + 2 = 50. A random 10-digit number passes 1 time in 10.</div>
+  <aside class="notes">A build-up: one press adds the last row and the sum. Khalid's ID is 1278681299; the first digit 1 marks a citizen (2 would be a resident's Iqama). From the right, the 2nd, 4th, 6th, 8th and 10th digits are doubled: 9, 1, 6, 7 and 1 become 18, 2, 12, 14 and 2. In the course data 4,612 accounts have a citizen's ID and 2,830 a resident's. Press once: above 9, subtract 9: 18 becomes 9, 12 becomes 3, 14 becomes 5. The sum of all ten results is 50, divisible by 10, so it is a well-formed ID. A tracking number such as 1234567890 sums to 43 and fails. Lab 4.3 task 1 writes is_saudi_id and is_saudi_iban; the detectors then use them as validators behind each regex. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="04 / The catalog">
+  <div class="kicker">04 / The catalog</div>
+  <h2>Every column gets a level, written down</h2>
+  <p class="lead small">Lab 4.3's catalog (task 2): what the scanner found, what was declared, and the level that follows.</p>
+  <div class="cols cols-32 mt-s">
+    <table class="t small">
+      <tr><th>table</th><th>column</th><th>personal data</th><th>level</th></tr>
+      <tr><td>customers</td><td>national_id</td><td>national ID</td><td><em>Secret</em></td></tr>
+      <tr><td>customers</td><td>iban</td><td>IBAN</td><td><em>Secret</em></td></tr>
+      <tr><td>customers</td><td>mobile</td><td>mobile</td><td><b>Restricted</b></td></tr>
+      <tr><td>customers</td><td>email</td><td>email</td><td><b>Restricted</b></td></tr>
+      <tr><td>customers</td><td>full_name</td><td>name (declared)</td><td><b>Restricted</b></td></tr>
+      <tr><td>customers</td><td>city</td><td>by association</td><td><b>Restricted</b></td></tr>
+      <tr class="hl"><td>support_notes</td><td>note</td><td>ID, IBAN, mobile, email</td><td><em>Secret</em></td></tr>
+    </table>
+    <div class="card flat c-teal"><h4>Free text</h4><p class="small mb0">Free text inherits its most sensitive content.</p></div>
+  </div>
+  <div class="callout tip mt-s"><b>Classification is code:</b> tags in the catalog that masking and access policies read.</div>
+  <aside class="notes">The real catalog of Lab 4.3, shortened. The scanner found the four patterned types; full_name was declared (no pattern finds a name); columns without PII of their own are Restricted by association, because the table holds personal data. The note column is Secret: it contains national IDs, so it takes the highest level among its contents. In a real platform these labels are tags in Unity Catalog, Polaris, DataHub or OpenMetadata, and policies follow the tags. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Pseudonymize">
+  <div class="kicker">05 / Pseudonymize</div>
+  <h2>Analysts need people, not identities</h2>
+  <p class="lead small">How many people are customers? Count national IDs, without anyone seeing one.</p>
+  <div class="cols cols-3 mid mt-s">
+    <div class="stat center"><div class="big">7,442</div><div class="lbl">accounts</div></div>
+    <div class="stat center"><div class="big">7,384</div><div class="lbl">people</div></div>
+    <div class="stat center"><div class="big">58</div><div class="lbl">people with two accounts</div></div>
+  </div>
+  <div class="cols cols-2 mid mt-s">
+    <div class="rec bad"><b>1278681299</b><span>Khalid's national ID</span><i>→ ?</i></div>
+    <div class="callout note"><b>Tokens.</b> Replace each ID by a token: the same ID always gives the same token.</div>
+  </div>
+  <div class="callout tip mt-s"><b>Pseudonymization:</b> replace an identifier by a token that still joins and counts, but doesn't say who.</div>
+  <aside class="notes">Real counts: 7,442 accounts belong to 7,384 distinct national IDs, so 58 people registered twice (Day 2 found them with email casing). Marketing wants new-customer counts, Finance wants first orders per person: both need to tell people apart. A token that is stable per ID keeps every join and count working. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="05 / Pseudonymize">
+  <div class="kicker">05 / Pseudonymize</div>
+  <h2>Replace each ID with its SHA-256 hash. Anonymous?</h2>
+  <p class="lead small">SHA-256 can't be reversed. Khalid's token would be <code>ed064fa5e94644b1ddb6</code>.</p>
+  <div class="quiz">
+    <p class="lead">Compliance asks: "Is it still personal data?" Predict first: what does an attacker with a leaked list of IDs do?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Yes: a hash can't be turned back into the ID</div>
+      <div class="opt" data-k="B" data-ok>No: anyone with a list of IDs can hash them and match</div>
+      <div class="opt" data-k="C">Yes, as long as the column is renamed</div>
+    </div>
+    <div class="callout tip why"><b>B is right.</b> Hash every ID on a leaked list and look the results up. Nobody needs to reverse the hash: they hash every candidate and compare, which is why A fails. C confuses obscurity with protection. Identifiers come from small, guessable spaces: hashing them doesn't hide them.</div>
+  </div>
+  <aside class="notes">Allow 45 seconds. B is right. A is the common misconception: nobody needs to reverse the hash; they hash every candidate and compare. National IDs have 10 digits with a check digit, so a laptop can hash all possible IDs in a short time, and a leaked list is faster still. C confuses obscurity with protection. The next slide runs the attack.</aside>
+</section>
+
+<section class="slide" data-label="05 / Pseudonymize">
+  <div class="kicker">05 / Pseudonymize</div>
+  <h2>A plain hash re-identifies everyone</h2>
+  <p class="lead small">Lab 4.3's attacker holds 500 leaked national IDs and the "anonymous" hashed table.</p>
+  <div class="cols cols-2 mt-s">
+    <div class="stack dense">
+      <div class="rec bad"><b>sha256("1278681299")</b><span>anyone can compute this</span><i>ed064fa5…</i></div>
+      <div class="stat center"><div class="big">500 of 500</div><div class="lbl">re-identified from plain hashes</div></div>
+    </div>
+    <div class="stack dense">
+      <div class="rec good"><b>hmac(key, "1278681299")</b><span>only whoever holds the key</span><i>6fb6a0bd…</i></div>
+      <div class="stat center"><div class="big">0 of 500</div><div class="lbl">without the key</div></div>
+    </div>
+  </div>
+  <div class="callout note mt-s"><b>58 people</b> with two accounts: still found, from tokens alone. The key lives in a secret manager. Rotate it and every token changes.</div>
+  <div class="callout tip mt-s"><b>Keyed hash (HMAC):</b> a stable token per ID that nobody can recompute without the secret key.</div>
+  <aside class="notes">Real results from Lab 4.3 task 3: with plain SHA-256 the attacker matches all 500 leaked IDs; with HMAC-SHA256 under a secret key, none. The tokens still find the 58 duplicate people. Khalid's HMAC token with the lab's default key starts 6fb6a0bd. Pseudonymized data is still personal data under PDPL: whoever holds the key can match it. It lowers the risk; true anonymization (aggregates, k-anonymity, differential privacy) is a much higher bar. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / Protect">
+  <div class="kicker">06 / Protect</div>
+  <h2>Four ways to protect a value</h2>
+  <p class="lead small">Different strengths, and only one makes data stop being personal.</p>
+  <table class="t small mt-s">
+    <tr><th>Technique</th><th>Khalid's value becomes</th><th>Reversible?</th><th>Still personal data?</th></tr>
+    <tr><td>masking</td><td><code>+9665•••••36</code> · <code>k•••@hotmail.com</code></td><td>no, for the viewer</td><td>the base table is</td></tr>
+    <tr><td>pseudonymization</td><td><code>6fb6a0bdfde478b9d8aa</code></td><td>with the key</td><td>yes</td></tr>
+    <tr><td>anonymization</td><td>"Riyadh · Al Malqa: 438 customers"</td><td>no</td><td>no, if done properly (hard)</td></tr>
+    <tr><td>encryption</td><td>ciphertext, at rest and in transit</td><td>with the key</td><td>yes</td></tr>
+  </table>
+  <div class="callout tip mt-s"><b>Pick per audience:</b> masks for people who need a glimpse, tokens for analysis, aggregates for publication.</div>
+  <aside class="notes">Khalid's real values: Lab 4.3's mask keeps the last two digits of the mobile and the first letter and domain of the email. Encryption protects storage and networks but anyone who can query the decrypted table sees everything, so it doesn't replace access control. Anonymized aggregates are the only form that stops being personal data, and only if small groups can't be singled out. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / Protect">
+  <div class="kicker">06 / Protect</div>
+  <h2>Each role reads its own view of Khalid</h2>
+  <p class="lead small">Nobody reads raw.customers directly. Each role gets a view with only what its job needs.</p>
+  <div class="cols cols-2 mt-s">
+    <table class="t small">
+      <tr><th colspan="2">support.customers <span class="muted">support</span></th></tr>
+      <tr><td>full_name</td><td><span class="ar">خالد التميمي</span></td></tr>
+      <tr><td>email</td><td><code>khalid.48@hotmail.com</code></td></tr>
+      <tr><td>mobile</td><td><code>+9665•••••36</code></td></tr>
+      <tr><td>city</td><td>Riyadh</td></tr>
+    </table>
+    <table class="t small">
+      <tr><th colspan="2">analyst.customers <span class="muted">analysts</span></th></tr>
+      <tr><td>person_token</td><td><code>6fb6a0bdfde478b9d8aa</code></td></tr>
+      <tr><td>city</td><td>Riyadh</td></tr>
+      <tr><td>district</td><td>Al Malqa</td></tr>
+      <tr><td>email_domain</td><td><code>hotmail.com</code></td></tr>
+    </table>
+  </div>
+  <div class="rec bad mt-s"><b>analyst: SELECT national_id FROM main.customers</b><span>PermissionError: analyst may not read main</span><i>blocked</i></div>
+  <div class="callout tip mt-s"><b>Least privilege:</b> grants on views, never on the table with the raw identifiers.</div>
+  <aside class="notes">Lab 4.3 task 4. Support sees the name and email to talk to Khalid, but only the last two digits of his mobile. Analysts see a person token, his city and district and an email domain: enough to count people and segment them, nothing to contact or identify him. The lab's toy access check refuses any query outside the role's schema, and its PII scanner finds nothing in the analyst view. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="06 / Protect">
+  <div class="kicker">06 / Protect</div>
+  <h2>A view is a convention. A policy is enforced.</h2>
+  <p class="lead small">Views work if every tool uses them. Warehouses attach the rule to the column itself.</p>
+  <div class="cols cols-2 mid mt-s">
+    <pre class="code s"><code class="language-sql">CREATE VIEW analyst.customers AS
+SELECT pseudo(national_id) AS person_token,
+       customer_id, city, district,
+       lower(split_part(email, '@', 2))
+           AS email_domain,
+       created_at
+FROM main.customers;</code></pre>
+    <div class="stack dense">
+      <div class="card flat c-navy"><h4>Column masks and row filters</h4><p class="small mb0">Snowflake, BigQuery, Unity Catalog: the rule applies in every tool</p></div>
+      <div class="card flat c-teal"><h4>Tag-based policies</h4><p class="small mb0">classify once (Secret); the mask follows the tag to every table</p></div>
+      <div class="card flat c-purple"><h4>Roles, not people</h4><p class="small mb0">grants go to support and analyst, and people join roles</p></div>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>Put the rule where the data is:</b> a policy on the column or tag can't be bypassed by a new tool.</div>
+  <aside class="notes">Lab 4.3's analyst view, as SQL. DuckDB has no column security, so the lab models it with views and a toy grant check. A warehouse or catalog enforces the same thing natively: a masking policy on national_id, or on the Secret tag, applies whether the query comes from a dashboard, a notebook or an AI assistant. RBAC grants go to roles; people are added to roles. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="07 / Erasure">
+  <div class="kicker">07 / Erasure</div>
+  <h2>Compliance asks: erase customer 100710 for real</h2>
+  <p class="lead small">D1_4's customer, deleted in the app on 13 September. Our lakehouse copy is an Iceberg table.</p>
+  <div class="cols cols-3 mt-s">
+    <div class="card flat c-purple"><h4>Compliance</h4><p class="small mb0">"Is it gone everywhere?"</p></div>
+    <div class="stack dense">
+      <div class="rec good"><b>snapshot 1 · the first load</b><span>7,442 customers</span></div>
+      <p class="small frag">scan(snapshot 1): <em>1 row</em></p>
+      <p class="small frag">a data file on disk: <em>still holds the ID</em></p>
+    </div>
+    <div class="stack dense frag">
+      <div class="rec good"><b>snapshot 2 · after the DELETE</b><span>7,441 customers</span></div>
+      <p class="small">scan() today: <b>0 rows</b> ✓</p>
+    </div>
+  </div>
+  <div class="callout tip mt-s"><b>The right to destruction.</b> The PDPL gives data subjects the right to have their data destroyed. The table must forget it.</div>
+  <div class="callout warn mt-s frag"><b>Time travel is the feature.</b> Here it is the problem. DELETE is step one: the current table forgets; the history and the files on disk don't.</div>
+  <aside class="notes">A build-up: one press adds the DELETE. Lab 4.3 does this for one customer of its own table; the steps and the evidence are the same for 100710. D1_4 already deleted 100710 in the replica, and D2_2 kept the orders with an Unknown customer. Now the lakehouse copy: an Iceberg table written once (snapshot 1). Recall D3_1: every change is a new snapshot, and old snapshots stay for time travel. Press once. Real results from Lab 4.3 task 5: after tbl.delete, a scan of the current snapshot finds 0 rows for the customer, a scan of snapshot 1 still returns 1, and one Parquet file under the table's data folder still contains the national ID. Iceberg's delete wrote a new file without the row; the old file is kept because snapshot 1 points to it. <p class="small">Sources: <a href="D1_4_cdc_scd.html">D1_4_cdc_scd.html</a> · <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a> · <a href="https://iceberg.apache.org/docs/latest/maintenance/">Iceberg maintenance</a></p></aside>
+</section>
+
+<section class="slide" data-label="07 / Erasure">
+  <div class="kicker">07 / Erasure</div>
+  <h2>Four steps, then the proof</h2>
+  <p class="lead small">The same chores as D3_4's maintenance, run for a reason.</p>
+  <div class="flow mt-s">
+    <div class="step c-navy"><b>1 · Delete</b>a new snapshot without the row</div>
+    <div class="arrow">→</div>
+    <div class="step c-amber"><b>2 · Expire</b>drop the old snapshots: no time travel back</div>
+    <div class="arrow">→</div>
+    <div class="step c-purple"><b>3 · Remove orphans</b>delete files no snapshot points to</div>
+    <div class="arrow">→</div>
+    <div class="step c-teal"><b>4 · Verify</b>scan every file: the ID is gone</div>
+  </div>
+  <div class="cols cols-4 mid mt">
+    <div class="stat center"><div class="big">1</div><div class="lbl">snapshot left</div></div>
+    <div class="stat center"><div class="big">1</div><div class="lbl">orphan file removed</div></div>
+    <div class="stat center"><div class="big">0</div><div class="lbl">files containing the ID</div></div>
+    <div class="stat center"><div class="big">7,441</div><div class="lbl">everyone else, intact</div></div>
+  </div>
+  <div class="callout tip mt"><b>Erasure on a lakehouse:</b> delete, expire snapshots, remove orphan files, then verify on disk.</div>
+  <aside class="notes">Lab 4.3's exercise: expire every snapshot except the current one, then delete each data file that no remaining snapshot references (what Spark's remove_orphan_files procedure does), and prove it by scanning every Parquet file for the ID. The checks: one snapshot left, no file contains the ID, and the other customers are all still there. In production these are Iceberg procedures run by the platform, not by hand. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a> · <a href="https://iceberg.apache.org/docs/latest/maintenance/">Iceberg maintenance</a></p></aside>
+</section>
+
+<section class="slide" data-label="07 / Erasure">
+  <div class="kicker">07 / Erasure</div>
+  <h2>Beyond the table: the rest of the checklist</h2>
+  <p class="lead small">Before you tell 100710 the data is gone, every copy from slide 4 needs an answer.</p>
+  <div class="cols cols-2 mt-s">
+    <ul class="bullets tight small">
+      <li><b>Derived tables</b> · dbt rebuilds them; incremental models need a delete step</li>
+      <li><b>History</b> · SCD2 versions (Lab 1.4 deletes them all)</li>
+      <li><b>Column statistics</b> · min/max in old manifests can hold a value</li>
+    </ul>
+    <ul class="bullets tight small">
+      <li><b>Backups, replicas</b> · expire them on a schedule you can name</li>
+      <li><b>Exports</b> · files already sent to partners</li>
+      <li><b>Logs</b> · keep the request, not the data</li>
+    </ul>
+  </div>
+  <div class="callout note mt-s"><b>At scale.</b> Batch erasures weekly, or crypto-shred: encrypt each person's data with their own key, and delete the key.</div>
+  <div class="callout tip mt-s"><b>An erasure is a pipeline run:</b> it must reach every layer, and leave a record that it did.</div>
+  <aside class="notes">From the lab's closing notes. Old manifest files keep per-column lower and upper bounds, which for a single-row file are the value itself. dbt's table models drop the row on the next build; incremental models keep it unless a delete step runs. Doing all of this per request is expensive, so many teams batch erasures weekly within the legal deadline, or use crypto-shredding. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a></p></aside>
+</section>
+
+<section class="slide" data-label="08 / Before AI">
+  <div class="kicker">08 / Before AI</div>
+  <h2>Redact free text before it leaves the platform</h2>
+  <p class="lead small">Lab 4.3's stretch task. Tomorrow's assistant (D4_4) must never see a national ID.</p>
+  <div class="stack dense mt-s">
+    <div class="rec bad"><b>before</b><span>Refund to SA7115564106233328540257 requested; identity checked against ID 1986655445.</span></div>
+    <div class="rec good"><b>after redact(note)</b><span>Refund to [IBAN] requested; identity checked against [NATIONAL_ID].</span></div>
+  </div>
+  <div class="callout note mt-s"><b>Same detectors.</b> The same detectors, used the other way round: find each value, replace it with its type.</div>
+  <div class="callout tip mt-s"><b>Redaction:</b> replace detected personal data with typed placeholders before text reaches a model.</div>
+  <aside class="notes">redact() runs find_pii on each note and replaces every hit with [NATIONAL_ID], [IBAN], [MOBILE] or [EMAIL]; the check is that the scanner finds nothing afterwards. Next session sends questions and metric descriptions to a language model: that boundary is a transfer, and PDPL's rules on purpose and on transfers outside the Kingdom apply to it. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a> · <a href="D4_4_data_for_ai.html">D4_4_data_for_ai.html</a></p></aside>
+</section>
+
+<section class="slide" data-label="09 / The tools">
+  <div class="kicker">09 / The tools</div>
+  <h2>The same ideas, ready-made</h2>
+  <p class="lead small">Everything in today's deck exists as a product or a built-in.</p>
+  <table class="t small mt-s">
+    <tr><th>In the deck</th><th>In production</th></tr>
+    <tr><td>PII discovery with validators</td><td>Microsoft Presidio · cloud DLP scanners · catalog classifiers</td></tr>
+    <tr><td>a catalog with levels</td><td>Unity Catalog · Polaris · DataHub · OpenMetadata: tags on columns</td></tr>
+    <tr><td>tokens and keys</td><td>HMAC with keys in a secret manager (Vault, a cloud KMS) · tokenization services</td></tr>
+    <tr><td>masked views per role</td><td>column masking and row access policies · tag-based policies · RBAC</td></tr>
+    <tr><td>erasure on Iceberg</td><td><code>expire_snapshots</code> · <code>remove_orphan_files</code> · crypto-shredding</td></tr>
+  </table>
+  <div class="callout tip mt-s"><b>You built each piece by hand in the lab;</b> in production you configure them.</div>
+  <aside class="notes">Map each row to its slide. Presidio uses the same recipe as the lab: recognizers (patterns plus checksums) and context words. Catalog tags let one classification drive masking in every engine that reads the catalog. Keys belong in a secret manager, never in a notebook or a repository. <p class="small">Sources: <a href="https://microsoft.github.io/presidio/">Presidio</a> · <a href="https://iceberg.apache.org/docs/latest/maintenance/">Iceberg maintenance</a></p></aside>
+</section>
+
+<section class="slide" data-label="10 / The words">
+  <div class="kicker">10 / The words</div>
+  <h2>Twelve words for protecting people</h2>
+  <p class="lead small">Every one appeared in today's deck. Lab 4.3 uses them all.</p>
+  <div class="cols cols-2 mt-s">
+    <ul class="bullets tight small">
+      <li><b>Personal data</b> · anything that identifies a person</li>
+      <li><b>PDPL</b> · Saudi Arabia's data protection law</li>
+      <li><b>Classification</b> · Top Secret, Secret, Restricted, Public</li>
+      <li><b>By association</b> · harmless alone, identifying together</li>
+      <li><b>Discovery</b> · find personal data by its values</li>
+      <li><b>Check digit</b> · Luhn, mod 97: real IDs, not lookalikes</li>
+    </ul>
+    <ul class="bullets tight small">
+      <li><b>Pseudonymization</b> · a token per ID, still personal data</li>
+      <li><b>HMAC</b> · a hash only the key holder can repeat</li>
+      <li><b>Masking</b> · show part of a value to a role</li>
+      <li><b>Least privilege</b> · each role reads only its view</li>
+      <li><b>Erasure</b> · delete, expire, remove orphans, verify</li>
+      <li><b>Redaction</b> · placeholders before text leaves</li>
+    </ul>
+  </div>
+  <div class="callout tip mt-s"><b>Know where the data is, show each role only what it needs, and be able to forget a person.</b></div>
+  <aside class="notes">A reference slide: point at each word and ask the room which slide it appeared on, and what it did to Khalid's row.</aside>
+</section>
+
+<section class="slide" data-label="11 / Recall">
+  <div class="kicker">11 / Recall</div>
+  <h2>Your turn: answer before you look</h2>
+  <p class="lead small">Five questions on Khalid's row and on erasing 100710. Answer out loud, or with a neighbour. Say it without the slides: what you can recall now, you can use in the lab.</p>
+  <ol class="bullets tight small">
+    <li>dim_customers has no national ID. Why is Khalid's ID still a problem?<div class="frag small muted">In the app, the CDC feed, raw, staging, SCD2 history and old snapshots: every copy needs protection.</div></li>
+    <li>The regex finds tracking numbers too. What tells a real national ID apart?<div class="frag small muted">The Luhn check digit: Khalid's digits sum to 50, a multiple of 10. A random number passes 1 in 10.</div></li>
+    <li>Why is a plain SHA-256 of the national ID not anonymous?<div class="frag small muted">Anyone can hash a list of IDs and match: 500 of 500 re-identified. Use HMAC with a secret key.</div></li>
+    <li>What does an analyst see of Khalid, and why is that enough?<div class="frag small muted">A person token, Riyadh, Al Malqa, hotmail.com: enough to count and segment people, not to contact them.</div></li>
+    <li>After DELETE, 100710's ID is still on disk. What else must run?<div class="frag small muted">Expire old snapshots, remove orphan files, verify every file; then derived tables, backups and exports.</div></li>
+  </ol>
+  <div class="callout tip mt-s frag"><b>Find it, classify it, tokenize or mask it per role, and erase it everywhere:</b> the whole session in one line.</div>
+  <aside class="notes">About 3 minutes. Read each question, give the room 20 to 30 seconds, and take an answer before moving on. Don't reveal until people have committed to an answer. Each key press then shows an answer in place. Go back to the slide for any answer the room missed: the six copies (slide 4), the Luhn check (slide 9), the plain-hash attack (slide 13), the role views (slide 15), erasure on Iceberg (slides 17 to 19).</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 4.3">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 4.3 · 25 min</div>
+      <h2>Governance, security and privacy</h2>
+      <p class="lead small">Find Saudi PII by content, classify it, pseudonymize it, mask it per role, and erase a customer for real.</p>
+      <div class="stack dense">
+        <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab · D4_3_governance_privacy.ipynb</a>
+        <a class="nb" href="https://bigid.com/blog/ndmo-framework-for-pdpl-compliance/">Reading · the NDMO framework and PDPL compliance</a>
+        <a class="nb" href="https://iceberg.apache.org/docs/latest/maintenance/">Reference · Iceberg table maintenance</a>
+        <a class="nb" href="../index.html">Back to the course page</a>
+      </div>
+    </div>
+    <div>
+    <ul class="checklist">
+      <li>PII discovery: validators, not just regexes <span class="min">6 min</span></li>
+      <li>Classify every column (NDMO levels) <span class="min">4 min</span></li>
+      <li>Pseudonymize with a keyed hash <span class="min">5 min</span></li>
+      <li>Masked views per role <span class="min">5 min</span></li>
+      <li>Right to erasure on Iceberg, verified <span class="min">5 min</span></li>
+      <li class="stretch">Stretch: redact free text before it reaches an LLM. Check Khalid's ID with your is_saudi_id: 1278681299 must pass.</li>
+    </ul>
+    <div class="callout tip mt-s"><b>Next: data for AI.</b> The assistant answers questions, and never sees Khalid's ID.</div>
+    </div>
+  </div>
+  <aside class="notes">Hand over to the lab. A quick first check after task 1: is_saudi_id("1278681299") is True and is_saudi_id("1234567890") is False. After task 5, files_containing must return an empty list. <p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb">Lab 4.3 notebook</a> · <a href="D4_4_data_for_ai.html">D4_4_data_for_ai.html</a></p></aside>
+</section>
+
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

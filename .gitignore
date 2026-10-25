@@ -17,3 +17,4 @@ labs/dbt_qafila/.user.yml
 # working notes (not published)
 notes/
 labs/logs/
+.shots/

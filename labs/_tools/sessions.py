@@ -44,11 +44,11 @@ OPENING = [
 # boards: the part of a deck a session teaches, when two sessions share one deck
 SESSIONS = [
     dict(id="D1_1", title="Storage for analytics 1 · rows and columns", stage="Store · query", deck="D1_1_storage",
-         boards="1–14", tool="duckdb",
+         boards="1–13", tool="duckdb",
          topics="OLTP vs. OLAP, row vs. column storage, compression; DuckDB, files in place, one writer",
          lab="D1_1_platform_tour"),
-    dict(id="D1_2", title="Storage for analytics 2 · columns in a file", stage="Store", deck="D1_1_storage#15",
-         boards="15–30", topics="CSV vs. Parquet, row groups and statistics, sorting to skip, partitions, small files",
+    dict(id="D1_2", title="Storage for analytics 2 · columns in a file", stage="Store", deck="D1_1_storage#14",
+         boards="14–26", topics="CSV vs. Parquet, row groups and statistics, sorting to skip, partitions, small files",
          lab="D1_2_files_parquet"),
     dict(id="D1_3", title="Batch ingestion", stage="Ingest", tool="dlt",
          topics="full vs. incremental, cursors, pagination, retries, schema evolution", lab="D1_3_ingestion_dlt"),
