@@ -366,3 +366,22 @@ print("raw-duplicate-inclusive truth:", dict(Counter(e["city"] for e in events i
 # 2. Your consumer commits offsets **before** processing a batch. What failure does that cause?
 # 3. Event time or processing time for "deliveries per 15 minutes"? When would you choose the other one?
 # 4. The ops team wants the dashboard updated within 2 minutes and finance wants exact daily totals. Design both with one stream.
+#
+# ## 🖼️ Visual summary
+#
+# **1 · Watermarks, drawn.** One busy hour of delivered events: when each arrived (x) against when it happened (y).
+# Events on the dotted diagonal arrived instantly; the further below it, the later. The navy step line is the watermark.
+# A window (the grey and white bands) is emitted once the watermark passes its top edge; an event that arrives after
+# that is dropped (red ✕). Left: 2 minutes of patience. Right: 30 minutes, same hour.
+
+# %%
+import de_viz as V
+
+V.watermark(events, [timedelta(minutes=2), timedelta(minutes=30)])
+
+# %% [markdown]
+# **2 · The trade-off from Task 4.** More patience, fewer dropped events, later results. Two measures, two panels.
+
+# %%
+V.bars(tradeoff, "allowed_lateness_min", ["late_events_dropped", "median_emit_delay_min"],
+       titles=["late events dropped", "median emit delay (min)"], ylabel="allowed lateness (min)")

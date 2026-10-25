@@ -1,14 +1,14 @@
 # %% [markdown]
 # # Lab 2.1 · Bronze → silver with DuckDB and Polars
 #
-# Day 2 · Session 1 (Processing engines: DuckDB & Polars) · 25 min. What you'll build:
+# Day 2 · Session 1 (Processing engines: DuckDB & Polars) · 24 min, after `tools/polars`. What you'll build:
 # - the same transformation in **SQL (DuckDB)** and in **DataFrames (Polars)**, and a feel for when to use which;
 # - a silver `delivery_events` table: three timestamp formats parsed, duplicates removed, Riyadh time, ingest delay;
 # - a silver `customers` table: E.164 mobiles, normalized Arabic names, duplicate accounts linked to one person;
 # - a look at both engines' **query plans**, and silver Parquet files on disk.
 #
 # **Tasks**
-# - [ ] 1 · Same question, two engines (5')
+# - [ ] 1 · Same question, two engines (4')
 # - [ ] 2 · Parse three timestamp formats into UTC with Polars (6')
 # - [ ] 3 · Deduplicate, convert to Riyadh time, measure lateness (5')
 # - [ ] 4 · Clean customers in SQL: mobiles, Arabic names, duplicate accounts (5')
@@ -49,10 +49,10 @@ EVENTS = (U.RAW / "events" / "delivery_events.jsonl").as_posix()
 print(con.sql("SELECT table_name FROM information_schema.tables WHERE table_schema = 'raw' ORDER BY 1").fetchall())
 
 # %% [markdown]
-# ## 1 · Same question, two engines (5')
+# ## 1 · Same question, two engines (4')
 #
-# *Delivered revenue by store, September only.* In DuckDB it's SQL over the warehouse tables. In Polars it's a chain of
-# expressions over **lazy** frames: nothing runs until `.collect()`, so Polars can optimize the whole chain first.
+# *Delivered revenue by store, September only.* In DuckDB it's SQL over the warehouse tables; in Polars, one lazy chain
+# (`tools/polars` §10).
 
 # %%
 sql_result = con.sql("""
@@ -86,9 +86,7 @@ pl_result
 U.check(pl_result.equals(sql_result), "Polars and DuckDB agree, to the halala")
 
 # %% [markdown]
-# 🔍 Same engine design underneath (columnar, vectorized, multi-threaded, lazy/optimized), different interface. Use SQL
-# when the logic is relational and others must review it (most of a warehouse); use DataFrames when the logic is
-# procedural, parametrized or easier to test as Python functions. They interoperate through Apache Arrow at no cost.
+# 🔍 One answer, two interfaces over the same kind of engine. Which to pick when: `tools/polars` §12.
 #
 # ## 2 · Parse three timestamp formats into UTC with Polars (6')
 #
@@ -238,7 +236,7 @@ for f in sorted((OUT / "silver").glob("*.parquet")):
     print(f"{f.name:28s} {U.size_mb(f):5.2f} MB  {pl.scan_parquet(f).select(pl.len()).collect().item():,} rows")
 
 # %%
-check = duckdb.sql(f"SELECT count(*), count(DISTINCT event_id) FROM '{(OUT / 'silver' / 'delivery_events.parquet').as_posix()}'").fetchone()
+check = duckdb.sql(f"SELECT count(*), count(DISTINCT event_id) FROM '{(OUT / 'silver' / 'delivery_events.parquet').as_posix()}'").fetchall()[0]
 U.check(check[0] == check[1] == ev.height, "silver events readable by another engine, still unique")
 
 # %% [markdown]

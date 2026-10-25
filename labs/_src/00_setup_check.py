@@ -63,17 +63,17 @@ import duckdb
 
 con = duckdb.connect()
 U.attach_app(con)
-sources = {t: con.sql(f"SELECT count(*) FROM app.{t}").fetchone()[0] for t in ["customers", "stores", "products", "orders", "order_items"]}
+sources = {t: con.sql(f"SELECT count(*) FROM app.{t}").fetchall()[0][0] for t in ["customers", "stores", "products", "orders", "order_items"]}
 for name, path in [("payments (API)", "api/payments.jsonl"), ("customer CDC", "cdc/customers_changes.jsonl"),
                    ("delivery events", "events/delivery_events.jsonl")]:
-    sources[name] = con.sql(f"SELECT count(*) FROM read_json('{(U.RAW / path).as_posix()}', format='newline_delimited')").fetchone()[0]
+    sources[name] = con.sql(f"SELECT count(*) FROM read_json('{(U.RAW / path).as_posix()}', format='newline_delimited')").fetchall()[0][0]
 sources["supplier files"] = len(list((U.RAW / "suppliers").glob("*.csv")))
-sources["reviews"] = con.sql(f"SELECT count(*) FROM read_csv('{(U.RAW / 'reviews.csv').as_posix()}')").fetchone()[0]
+sources["reviews"] = con.sql(f"SELECT count(*) FROM read_csv('{(U.RAW / 'reviews.csv').as_posix()}')").fetchall()[0][0]
 con.close()
 
 db = U.build_warehouse()
 with U.connect(db, read_only=True) as wh:
-    raw_tables = wh.sql("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'raw'").fetchone()[0]
+    raw_tables = wh.sql("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'raw'").fetchall()[0][0]
 U.check(raw_tables >= 9, f"warehouse ready: {raw_tables} raw tables in {db.name}")
 pd.DataFrame(sources.items(), columns=["source", "rows / files"])
 
@@ -110,7 +110,7 @@ table.append(pa.table({"id": [1, 2, 3], "city": ["Riyadh", "Jeddah", "Dammam"]})
 
 con = duckdb.connect()
 U.duckdb_iceberg(con)
-n = con.sql(f"SELECT count(*) FROM iceberg_scan('{table.metadata_location}')").fetchone()[0]
+n = con.sql(f"SELECT count(*) FROM iceberg_scan('{table.metadata_location}')").fetchall()[0][0]
 con.close()
 U.check(n == 3, "PyIceberg wrote a table and DuckDB read it back")
 

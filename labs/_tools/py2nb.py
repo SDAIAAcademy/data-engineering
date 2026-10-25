@@ -3,9 +3,13 @@
     uv run python _tools/py2nb.py                 # all sources
     uv run python _tools/py2nb.py D1_1_tokenization  # one source
 
+Tool walkthroughs (labs/_src/tools/*.py) become labs/tools/<tool>.ipynb + labs/solutions/tools/<tool>.ipynb.
+Instructor demos (labs/_src/demos/*.py) have no exercises: each becomes one notebook in labs/demos/.
+
 Cell markers:
     # %% [markdown]   -> markdown cell; leading "# " is stripped from each line
     # %%              -> code cell
+    # %% [markdown] 🎓 -> instructor note: solution notebooks only
 
 Exercise regions (code cells only):
     # BEGIN SOLUTION
@@ -23,6 +27,9 @@ from pathlib import Path
 
 LABS = Path(__file__).resolve().parents[1]
 SRC = LABS / "_src"
+DEMO_SRC = SRC / "demos"
+TOOL_SRC = SRC / "tools"
+WALKTHROUGHS = {"00_sql_windows"}   # self-paced, no exercises: one notebook in labs/, no copy in solutions/
 
 
 def strip_solutions(lines: list[str], student: bool) -> list[str]:
@@ -44,11 +51,11 @@ def strip_solutions(lines: list[str], student: bool) -> list[str]:
     return out
 
 
-def convert(src: Path, student: bool) -> Path:
-    cells, kind, buf = [], None, []
+def convert(src: Path, student: bool, out_dir: Path | None = None) -> Path:
+    cells, kind, buf, instructor = [], None, [], False
 
     def flush():
-        if kind is None:
+        if kind is None or (instructor and student):
             return
         lines = buf[:]
         while lines and not lines[-1].strip():
@@ -72,6 +79,7 @@ def convert(src: Path, student: bool) -> Path:
         if line.startswith("# %%"):
             flush()
             kind, buf = ("markdown" if "[markdown]" in line else "code"), []
+            instructor = "🎓" in line
         else:
             buf.append(line)
     flush()
@@ -89,16 +97,23 @@ def convert(src: Path, student: bool) -> Path:
     }
     for i, c in enumerate(nb["cells"]):
         c["id"] = f"{src.stem[:20].lower().replace('_', '-')}-{i:03d}"
-    out_dir = LABS if student else LABS / "solutions"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = out_dir or (LABS if student else LABS / "solutions")
+    out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{src.stem}.ipynb"
-    out.write_text(json.dumps(nb, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(nb, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     return out
 
 
 if __name__ == "__main__":
     names = sys.argv[1:]
-    sources = [SRC / f"{n}.py" for n in names] if names else sorted(SRC.glob("*.py"))
+    sources = [SRC / f"{n}.py" for n in names if (SRC / f"{n}.py").exists()] if names else sorted(SRC.glob("*.py"))
+    demos = [DEMO_SRC / f"{n}.py" for n in names if (DEMO_SRC / f"{n}.py").exists()] if names else sorted(DEMO_SRC.glob("*.py"))
+    tools = [TOOL_SRC / f"{n}.py" for n in names if (TOOL_SRC / f"{n}.py").exists()] if names else sorted(TOOL_SRC.glob("*.py"))
     for s in sources:
-        for student in (True, False):
+        for student in (True,) if s.stem in WALKTHROUGHS else (True, False):
             print("wrote", convert(s, student).relative_to(LABS))
+    for s in tools:
+        for student in (True, False):
+            print("wrote", convert(s, student, LABS / "tools" if student else LABS / "solutions" / "tools").relative_to(LABS))
+    for s in demos:
+        print("wrote", convert(s, False, LABS / "demos").relative_to(LABS))

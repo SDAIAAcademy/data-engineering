@@ -1,7 +1,7 @@
 # %% [markdown]
 # # Lab 2.3 · A dbt project for Qafila
 #
-# Day 2 · Session 3 (dbt: transformation as software) · 25 min. What you'll do:
+# Day 2 · Session 3 (dbt: transformation as software) · 23 min, after `tools/dbt`. What you'll do:
 # - tour a real dbt project: sources, staging → intermediate → marts, macros, configs;
 # - write a **staging model** and an **incremental fact model** yourself, and build the DAG;
 # - watch an incremental run pick up a late change, and read the **lineage** dbt derives from `ref()`.
@@ -10,11 +10,20 @@
 # (`stg_orders` and `fct_order_items`), and on a copy of the warehouse, so nothing you break affects other labs.
 # dbt runs **in-process** from Python (`U.run_dbt([...])` wraps `dbtRunner`); in a terminal you'd type `dbt build` etc.
 #
+# **Coming from Lab 2.2?** The project builds the same star, with simpler names and keys. Don't copy Lab 2.2's into it:
+#
+# | | Lab 2.2 (the star by hand) | Lab 2.3 (this project) |
+# |---|---|---|
+# | dimensions | `dim_customer`, `dim_product` | `dim_customers`, `dim_products` |
+# | keys in the fact | warehouse keys `customer_key`, `product_key` | source IDs `customer_id`, `product_id` (`-1` = Unknown) |
+# | date | `date_key` | `order_date` |
+# | lines with a quantity ≤ 0 | kept, so the fact reconciles to the source | left out of the fact, kept in `quarantine.qrn_order_items` |
+#
 # **Tasks**
 # - [ ] 1 · Tour the project and list its models (4')
 # - [ ] 2 · Write `stg_orders` and build the staging layer (6')
-# - [ ] 3 · Write the incremental `fct_order_items` and build the marts (7')
-# - [ ] 4 · Change a source row; watch the incremental run (5')
+# - [ ] 3 · Write the incremental `fct_order_items` and build the marts (6')
+# - [ ] 4 · Change a source row; watch the incremental run (4')
 # - [ ] 5 · Read the lineage from the manifest (3')
 # - [ ] ✱ Stretch · Add a weekly category mart and document it
 
@@ -141,13 +150,11 @@ dbt("compile", "--select", "stg_orders", quiet=True)
 print(next((PROJ / "target" / "compiled").rglob("stg_orders.sql")).read_text(encoding="utf-8"))
 
 # %% [markdown]
-# ## 3 · Write the incremental `fct_order_items` and build the marts (7')
+# ## 3 · Write the incremental `fct_order_items` and build the marts (6')
 #
-# The order-line fact is the biggest table, and it grows every day. An **incremental** model processes only new or
-# changed data on later runs:
-# - `is_incremental()` is true when the table already exists (and you didn't pass `--full-refresh`);
-# - `{{ this }}` is the existing table, so `max(...)` over it is your high-water mark;
-# - `unique_key` + `incremental_strategy='delete+insert'` replaces reprocessed rows instead of duplicating them.
+# The order-line fact is the biggest table, and it grows every day, so it's **incremental**: `is_incremental()`,
+# `{{ this }}` and `unique_key` work as in `tools/dbt` §7b. What's new here is the real fact's columns and a
+# look-back window for late status changes.
 #
 # ✏️ **Exercise** · Write `models/marts/fct_order_items.sql`, the Lab 2.2 fact in dbt form. Grain: one row per order line
 # with `quantity > 0`. Config: `materialized='incremental'`, `unique_key='order_line_id'`, `incremental_strategy='delete+insert'`,
@@ -215,7 +222,7 @@ U.check(facts.lines[0] == 172545 - 142, "every order line except the 142 with no
 U.check(sql("SELECT count(*) AS n FROM marts.fct_order_items WHERE customer_id = -1").n[0] > 0, "erased customers mapped to -1")
 
 # %% [markdown]
-# ## 4 · Change a source row; watch the incremental run (5')
+# ## 4 · Change a source row; watch the incremental run (4')
 #
 # Simulate tomorrow's load: one delivered order is refunded on 1 October, so its `status` and `updated_at` change in the
 # source. Then run the fact model again, incrementally.
@@ -276,7 +283,8 @@ U.check({"fct_order_items", "stg_orders"} <= set(parents), "fct_orders reads the
 #
 # Add `models/marts/mart_weekly_category.sql`: one row per ISO week and product category with delivered revenue and units,
 # built from `fct_order_items` and `dim_products`. Add a YAML entry with a description and a uniqueness test on
-# `iso_week || category`, then `dbt build --select mart_weekly_category`.
+# `iso_week || category`, then `dbt build --select dim_products mart_weekly_category` (nothing above built
+# `dim_products` yet).
 
 # %%
 # BEGIN SOLUTION
@@ -301,7 +309,7 @@ models:
           arguments:
             column_name: "iso_week || '|' || category"
 """.strip() + "\n", encoding="utf-8")
-dbt("build", "--select", "mart_weekly_category")
+dbt("build", "--select", "dim_products", "mart_weekly_category")
 display(sql("SELECT * FROM marts.mart_weekly_category ORDER BY iso_week DESC, revenue_sar DESC LIMIT 5"))
 # END SOLUTION
 

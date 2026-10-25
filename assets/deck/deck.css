@@ -381,3 +381,25 @@ body.overview .slide.active { outline-color: var(--amber); }
 /* denser card stacks for crowded slides */
 .stack.dense > * + * { margin-top: 12px; }
 .stack.dense .card { font-size: 21px; padding: 16px 22px; }
+
+/* the Qafila platform map ("you are here"), drawn by deck.js from <div class="pmap" data-here="..."> */
+.pmap { display: grid; grid-template-columns: repeat(6, 1fr); grid-auto-rows: 44px; gap: 6px 8px; margin-top: 18px; font-size: 17px; }
+.pmap > div { z-index: 1; display: flex; align-items: center; gap: 8px; padding: 0 12px; white-space: nowrap; overflow: hidden; border-radius: 6px; }
+.pmap .pm-col { z-index: 0; background: rgba(28, 53, 94, .07); border-radius: 8px; }
+.pmap .pm-h { font-size: 15px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  background: var(--paper-2); padding: 0 26px 0 20px; border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%); }
+.pmap .pm-h:first-of-type { clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%); }
+.pmap .pm-h.on { background: var(--navy); color: #fff; }
+.pmap .pm-t, .pmap .pm-s, .pmap .pm-b { border: 1.5px solid var(--line); background: #fff; }
+.pmap .pm-s { border-style: dashed; }
+.pmap .pm-b { background: var(--paper-2); }
+.pmap b { font-weight: 700; }
+.pmap .pm-b b { min-width: 120px; }
+.pmap small { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
+.pmap i { order: 9; margin-left: auto; font-style: normal; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pmap .on.pm-t, .pmap .on.pm-b { background: var(--navy); border-color: var(--navy); color: #fff; }
+.pmap .on small, .pmap .on i { color: #dfe5ef; }
+.pmap .on b::before { content: "▸ "; }
+.pmap .dim { opacity: .38; }
+.pmap .narrow small { display: none; }

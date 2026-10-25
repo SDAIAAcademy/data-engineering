@@ -2,6 +2,8 @@
 
 Teams of 2–3 build a working data platform and present it on Day 5 (10 min talk + live demo, 5 min technical Q&A).
 
+Use the **Qafila platform map** (chapter 09 of the [architecture story](https://sdaiaacademy.github.io/data-engineering/slides/00_story.html)) as your checklist: for every stage (sources → ingest → store → transform → test → serve, with orchestrate, observe and govern across them), show which part of your platform covers it, the tool you chose and why.
+
 ## Choose an option
 
 | Option | Builds on | Data ideas |

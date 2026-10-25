@@ -218,7 +218,7 @@ def compare(rule, value):
     return OPS[op](value, rule[op]), f"{op} {rule[op]}"
 
 def q(sql_text):
-    return con.sql(sql_text).fetchone()[0]
+    return con.sql(sql_text).fetchall()[0][0]
 
 # %% [markdown]
 # ✏️ **Exercise** · `invalid_values(table, column, arguments)` returns the number of **non-null** values in `column` that

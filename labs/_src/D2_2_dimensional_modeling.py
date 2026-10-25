@@ -67,7 +67,7 @@ q = lambda sql: con.sql(sql).df()
 # BEGIN SOLUTION
 n_lines, n_keys = con.sql("""
     SELECT count(*), count(DISTINCT (order_id, line_no)) FROM wh.raw.order_items
-""").fetchone()
+""").fetchall()[0]
 # END SOLUTION
 U.check(n_lines == n_keys, f"(order_id, line_no) is unique across {n_lines:,} lines: the grain holds")
 

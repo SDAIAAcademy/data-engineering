@@ -90,7 +90,7 @@ print("delivered orders on National Day:", n_national)
 national_day.explain()
 
 # %%
-expected = con.sql("SELECT count(*) FROM raw.orders WHERE created_at[:10] = '2026-09-23' AND status = 'delivered'").fetchone()[0]
+expected = con.sql("SELECT count(*) FROM raw.orders WHERE created_at[:10] = '2026-09-23' AND status = 'delivered'").fetchall()[0][0]
 U.check(n_national == expected, "same answer as DuckDB")
 U.check("PartitionFilters: [isnotnull(order_date" in national_day._jdf.queryExecution().executedPlan().toString(),
         "partition pruning: Spark only opens one folder")

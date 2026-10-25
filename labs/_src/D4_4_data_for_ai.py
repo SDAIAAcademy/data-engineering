@@ -383,4 +383,4 @@ evals
 # ## 🏁 Capstone kickoff
 #
 # Tomorrow is capstone day. Open `labs/capstone/README.md`: pick your option, copy `TEMPLATE_README.md` into your project,
-# and get `capstone/pipeline.py` running end to end tonight. Slides: the last section of today's deck.
+# and get `capstone/pipeline.py` running end to end tonight. Slides: the capstone brief, `slides/capstone.html`.

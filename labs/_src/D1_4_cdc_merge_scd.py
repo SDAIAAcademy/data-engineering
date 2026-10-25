@@ -9,6 +9,9 @@
 # The inputs: a snapshot of `customers` taken on **1 September 2026**, and every change made during September
 # (`data/raw/cdc/customers_changes.jsonl`), in the order the connector delivered them.
 #
+# This lab leans on window functions (`row_number`, `lead`, frames, `QUALIFY`). If they're new to you, walk through
+# `00_sql_windows.ipynb` first.
+#
 # **Tasks**
 # - [ ] 1 · Read the feed; find duplicates and out-of-order events (4')
 # - [ ] 2 · Latest change per key; MERGE into a current-state table (7')
@@ -72,15 +75,15 @@ con.sql("SELECT arrival, lsn, op, after.customer_id, after.city, after.mobile FR
 
 # %%
 # BEGIN SOLUTION
-n_duplicates = con.sql("SELECT count(*) - count(DISTINCT lsn) FROM changes").fetchone()[0]
+n_duplicates = con.sql("SELECT count(*) - count(DISTINCT lsn) FROM changes").fetchall()[0][0]
 n_out_of_order = con.sql("""
     SELECT count(*) FROM (
         SELECT lsn < max(lsn) OVER (ORDER BY arrival ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS late
         FROM changes
     ) WHERE late
-""").fetchone()[0]
+""").fetchall()[0][0]
 # END SOLUTION
-total = con.sql("SELECT count(*) FROM changes").fetchone()[0]
+total = con.sql("SELECT count(*) FROM changes").fetchall()[0][0]
 print(f"{total:,} events | {n_duplicates} duplicates | {n_out_of_order:,} out of order")
 U.check(n_duplicates > 100, "the connector redelivered some events")
 U.check(n_out_of_order > 1000, "arrival order is not commit order")
@@ -91,8 +94,9 @@ U.check(n_out_of_order > 1000, "arrival order is not commit order")
 #
 # ## 2 · Latest change per key; MERGE into a current-state table (7')
 #
-# Start from the snapshot. Careful with types: a CSV sniffer would read `0596390578` as the number 596390578 and silently
-# drop the leading zero, so identifiers are read as text.
+# Start from the snapshot. Careful with types: whether a CSV reader keeps the leading zero of `0596390578` depends on
+# the tool and its version (DuckDB 1.5 keeps it as text; pandas reads the number 596390578). Identifiers are text, so
+# say so with `types =` instead of trusting the guess.
 
 # %%
 con.sql(f"""
@@ -101,7 +105,7 @@ con.sql(f"""
         types = {{'mobile': 'VARCHAR', 'national_id': 'VARCHAR', 'iban': 'VARCHAR',
                   'created_at': 'VARCHAR', 'updated_at': 'VARCHAR'}})
 """)
-print("snapshot rows:", con.sql("SELECT count(*) FROM customers").fetchone()[0])
+print("snapshot rows:", con.sql("SELECT count(*) FROM customers").fetchall()[0][0])
 con.sql("DESCRIBE customers").df()[["column_name", "column_type"]].T
 
 # %% [markdown]
@@ -155,10 +159,10 @@ con.sql("SELECT op, count(*) AS customers FROM latest GROUP BY op ORDER BY op").
 
 # %%
 # BEGIN SOLUTION
-missing = con.sql("SELECT count(*) FROM (SELECT * FROM app.customers EXCEPT SELECT * FROM customers)").fetchone()[0]
-extra = con.sql("SELECT count(*) FROM (SELECT * FROM customers EXCEPT SELECT * FROM app.customers)").fetchone()[0]
+missing = con.sql("SELECT count(*) FROM (SELECT * FROM app.customers EXCEPT SELECT * FROM customers)").fetchall()[0][0]
+extra = con.sql("SELECT count(*) FROM (SELECT * FROM customers EXCEPT SELECT * FROM app.customers)").fetchall()[0][0]
 # END SOLUTION
-n_src, n_copy = con.sql("SELECT (SELECT count(*) FROM app.customers), (SELECT count(*) FROM customers)").fetchone()
+n_src, n_copy = con.sql("SELECT (SELECT count(*) FROM app.customers), (SELECT count(*) FROM customers)").fetchall()[0]
 print(f"source {n_src:,} rows | copy {n_copy:,} rows | missing {missing} | extra {extra}")
 U.check(missing == 0 and extra == 0, "the replica matches the source exactly")
 
@@ -211,7 +215,7 @@ stats = con.sql("""
 stats
 
 # %%
-erased = con.sql("SELECT count(*) FROM changes WHERE op = 'd'").fetchone()[0]
+erased = con.sql("SELECT count(*) FROM changes WHERE op = 'd'").fetchall()[0][0]
 U.check(stats.current_rows[0] == n_src, "one current version per live customer")
 U.check(stats.versions[0] > stats.customers[0], "changed customers have several versions")
 print(f"{erased} customers were erased: their versions are closed, but still here. Is that allowed? (see below)")
@@ -226,7 +230,7 @@ con.sql("""
     DELETE FROM dim_customer_scd2
     WHERE customer_id IN (SELECT before.customer_id FROM changes WHERE op = 'd')
 """)
-U.check(con.sql("SELECT count(*) FROM dim_customer_scd2 WHERE NOT is_current").fetchone()[0] > 0, "history kept for everyone else")
+U.check(con.sql("SELECT count(*) FROM dim_customer_scd2 WHERE NOT is_current").fetchall()[0][0] > 0, "history kept for everyone else")
 
 # %% [markdown]
 # ## 5 · As-of join: revenue by customer city at order time (3')
@@ -270,9 +274,10 @@ by_city
 U.check(by_city.difference.abs().sum() > 0, "moving customers shift revenue between cities")
 
 # %% [markdown]
-# 🔍 The totals differ by a few percent at most, but for a city manager whose bonus depends on it, "a few percent" is the
-# whole conversation. Which one is right depends on the question: **as-of** for "where did we sell", **current** for
-# "where are our customers now". Also note: orders of erased customers fall out of both joins. Day 2's star schema keeps
+# 🔍 The city totals differ by a few percent at most, but if marketing splits its campaign budget by customer city, "a few
+# percent" is real money. Which one is right depends on the question: **as-of** for "how much did customers spend while
+# they lived in each city", **current** for "where do our customers live now". Where we *sold* is a third question, and
+# the store answers it. Also note: orders of erased customers fall out of both joins. Day 2's star schema keeps
 # them with an "unknown customer" row.
 #
 # ## ✱ Stretch · Make the MERGE incremental: process the feed in 4 batches
@@ -309,7 +314,7 @@ for lo, hi in zip(edges, edges[1:]):
     """)
 diff = con.sql("""SELECT count(*) FROM (
     (SELECT * FROM app.customers EXCEPT SELECT * EXCLUDE (_lsn) FROM customers_inc)
-    UNION ALL (SELECT * EXCLUDE (_lsn) FROM customers_inc EXCEPT SELECT * FROM app.customers))""").fetchone()[0]
+    UNION ALL (SELECT * EXCLUDE (_lsn) FROM customers_inc EXCEPT SELECT * FROM app.customers))""").fetchall()[0][0]
 print("differences after 4 batches:", diff)
 # END SOLUTION
 
@@ -324,3 +329,49 @@ print("differences after 4 batches:", diff)
 # 2. Your MERGE runs twice on the same batch. What happens, and why is that fine?
 # 3. Which Qafila attributes deserve SCD2 history, and which are fine as Type 1 (overwrite)?
 # 4. An erasure request arrives. List every place in today's pipeline where that customer's data now lives.
+#
+# ## 🖼️ Visual summary
+#
+# The pictures below are drawn from this lab's feed and tables.
+#
+# **1 · Arrival order is not commit order.** Sixty events of the feed: each dot's position in the feed (x) against its
+# position in the database log (y). The grey line is the highest `lsn` delivered so far; every red ✕ below it arrived
+# after a newer event. The amber ring is a redelivery of an `lsn` already seen. In this feed, roughly half of all
+# events are out of order by a little: that's why only the log position can be trusted.
+
+# %%
+import de_viz as V
+
+arrivals = con.sql("""
+    SELECT arrival, lsn,
+           lsn < max(lsn) OVER (ORDER BY arrival ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS late,
+           row_number() OVER (PARTITION BY lsn ORDER BY arrival) > 1                              AS duplicate
+    FROM changes ORDER BY arrival
+""").df()
+first = int(arrivals[arrivals.duplicate].arrival.min()) - 30      # 60 arrivals around the first redelivery
+V.arrivals(arrivals, first=first, last=first + 60)
+
+# %% [markdown]
+# **2 · The SCD2 history, version by version.** Four customers who moved city in September and two who were erased,
+# as built in Task 4 (before the erasure `DELETE`). A version ends where the next one starts; a delete ends the last
+# version (✕) and starts nothing. Two neighbouring versions can show the same city: the change was to the district or
+# the mobile number. Versions from the 1 September snapshot started earlier; they're drawn from 25 August.
+
+# %%
+history = con.sql("""
+    SELECT customer_id, city, valid_from, lead(valid_from) OVER w AS valid_to
+    FROM versions
+    WINDOW w AS (PARTITION BY customer_id ORDER BY lsn)
+    QUALIFY NOT is_delete
+""").df()
+movers = con.sql("""
+    SELECT customer_id FROM versions WHERE NOT is_delete
+    GROUP BY customer_id HAVING count(DISTINCT city) > 2
+    ORDER BY count(*) DESC, customer_id LIMIT 4
+""").df().customer_id.tolist()
+erased_ids = con.sql("""
+    SELECT customer_id FROM versions GROUP BY customer_id HAVING bool_or(is_delete)
+    ORDER BY count(*) DESC, customer_id LIMIT 2
+""").df().customer_id.tolist()
+V.timelines([("Customers who moved, and customers who were erased", history[history.customer_id.isin(movers + erased_ids)])],
+            since="2026-08-25", until="2026-10-01")

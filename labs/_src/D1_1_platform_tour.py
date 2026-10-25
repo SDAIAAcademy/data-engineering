@@ -1,7 +1,7 @@
 # %% [markdown]
 # # Lab 1.1 · Platform tour with DuckDB
 #
-# Day 1 · Session 1 (The modern data platform) · 25 min. What you'll do:
+# Day 1 · Session 1 (Storage for analytics, part 1: the DuckDB walkthrough) · 25 min. What you'll do:
 # - query every Qafila source **in place** (SQLite, JSON lines, CSV) with one engine, without loading anything first;
 # - profile the app database: volumes, keys, relationships, formats;
 # - start the **issue log**: the list of data problems the rest of the week fixes.
@@ -39,16 +39,14 @@ print("data:", U.RAW, "| quick mode:", U.QUICK)
 # %%
 import duckdb
 import matplotlib.pyplot as plt
-import pandas as pd
 
-pd.set_option("display.max_colwidth", 80)
 con = duckdb.connect()          # in-memory database: nothing is copied unless we ask
 RAW = U.RAW.as_posix()          # DuckDB likes forward slashes, also on Windows
 
 # %% [markdown]
 # ## 1 · Query CSV, JSON lines and SQLite in place (5')
 #
-# Qafila's data lives in several places (see the table on the course slides). DuckDB reads each of them where it is:
+# Qafila's data lives in several places (see "Every step leaves a record" in the intro deck, `slides/00_intro.html`). DuckDB reads each of them where it is:
 #
 # | Source | Path | DuckDB reader |
 # |---|---|---|
@@ -68,16 +66,16 @@ U.peek(f"{RAW}/reviews.csv", 3)
 
 # %%
 # CSV: the header and types are inferred (sniffed) from the file
-con.sql(f"SELECT * FROM read_csv('{RAW}/reviews.csv') LIMIT 5").df()
+con.sql(f"SELECT * FROM read_csv('{RAW}/reviews.csv') LIMIT 5")
 
 # %%
 # The app database: attach it read-only and list its tables
 con.sql(f"ATTACH '{RAW}/qafila_oltp.sqlite' AS app (TYPE sqlite, READ_ONLY)")
-con.sql("SELECT table_name, estimated_size FROM duckdb_tables() WHERE database_name = 'app'").df()
+con.sql("SELECT table_name, estimated_size FROM duckdb_tables() WHERE database_name = 'app'")
 
 # %% [markdown]
 # ✏️ **Exercise** · Count the delivery events by `event_type`, straight from the JSON lines file, sorted by count.
-# Store the result as a pandas DataFrame in `events_by_type` (columns `event_type`, `n`).
+# Store the query in `events_by_type` (columns `event_type`, `n`).
 
 # %%
 # BEGIN SOLUTION
@@ -86,13 +84,14 @@ events_by_type = con.sql(f"""
     FROM read_json_auto('{RAW}/events/delivery_events.jsonl')
     GROUP BY event_type
     ORDER BY n DESC
-""").df()
+""")
 # END SOLUTION
 events_by_type
 
 # %%
-U.check(set(events_by_type.columns) == {"event_type", "n"}, "columns are event_type, n")
-U.check(int(events_by_type.n.sum()) == 22518, f"{int(events_by_type.n.sum()):,} events in total")
+total = sum(n for _, n in events_by_type.fetchall())
+U.check(events_by_type.columns == ["event_type", "n"], "columns are event_type, n")
+U.check(total == 22518, f"{total:,} events in total")
 
 # %% [markdown]
 # 🔍 **Look at** the counts: there are more `assigned` events than `delivered` + `cancelled` + `failed` together.
@@ -112,7 +111,7 @@ con.sql("""
     WHERE o.status = 'delivered'
     GROUP BY ALL
     ORDER BY gmv_sar DESC
-""").df()
+""")
 
 # %% [markdown]
 # ## 2 · SUMMARIZE the orders; daily volume chart (5')
@@ -120,7 +119,7 @@ con.sql("""
 # `SUMMARIZE` profiles every column at once: type, min, max, approximate distinct count, null percentage.
 
 # %%
-con.sql("SUMMARIZE app.orders").df()[["column_name", "column_type", "min", "max", "approx_unique", "null_percentage"]]
+con.sql("SELECT column_name, column_type, min, max, approx_unique, null_percentage FROM (SUMMARIZE app.orders)")
 
 # %% [markdown]
 # Notice `created_at` is a **string** (`VARCHAR`): SQLite has no real timestamp type. The app stores UTC as text.
@@ -136,11 +135,13 @@ daily = con.sql("""
     FROM app.orders
     GROUP BY day
     ORDER BY day
-""").df()
+""")
 # END SOLUTION
-U.check(len(daily) == 61, f"{len(daily)} days (Aug + Sep 2026)")
-ax = daily.plot(x="day", y="orders", figsize=(10, 3.2), legend=False, title="Qafila orders per day (Riyadh time)")
-ax.set_xlabel("")
+days, orders = zip(*daily.fetchall())
+U.check(len(days) == 61, f"{len(days)} days (Aug + Sep 2026)")
+plt.figure(figsize=(10, 3.2))
+plt.plot(days, orders)
+plt.title("Qafila orders per day (Riyadh time)")
 plt.tight_layout()
 plt.show()
 
@@ -149,6 +150,7 @@ plt.show()
 #
 # ## 3 · Check keys: duplicate customers, orphan orders (5')
 #
+# The keys link the tables (see "Other keys name who and what" in the intro deck): every order's `customer_id` should find a row in `customers`.
 # A primary key in the source database only guarantees the **ID** is unique, not that each **person** appears once.
 #
 # ✏️ **Exercise** · Compute three numbers:
@@ -161,12 +163,12 @@ plt.show()
 dup_people = con.sql("""
     SELECT count(*) FROM (
         SELECT national_id FROM app.customers GROUP BY national_id HAVING count(*) > 1
-    )""").fetchone()[0]
+    )""").fetchall()[0][0]
 orphan_orders = con.sql("""
     SELECT count(*) FROM app.orders o
     LEFT JOIN app.customers c USING (customer_id)
-    WHERE c.customer_id IS NULL""").fetchone()[0]
-negative_lines = con.sql("SELECT count(*) FROM app.order_items WHERE quantity < 0").fetchone()[0]
+    WHERE c.customer_id IS NULL""").fetchall()[0][0]
+negative_lines = con.sql("SELECT count(*) FROM app.order_items WHERE quantity < 0").fetchall()[0][0]
 # END SOLUTION
 print(f"duplicate people: {dup_people} | orphan orders: {orphan_orders} | negative lines: {negative_lines}")
 U.check(dup_people > 40, "some people have several customer accounts")
@@ -180,7 +182,7 @@ con.sql("""
     SELECT customer_id, full_name, email, mobile, national_id, created_at
     FROM app.customers
     WHERE national_id = (SELECT national_id FROM app.customers GROUP BY 1 HAVING count(*) > 1 ORDER BY 1 LIMIT 1)
-""").df()
+""")
 
 # %% [markdown]
 # 🔍 Same person, same national ID, but the email is upper-cased and the mobile number is written differently. A
@@ -202,7 +204,7 @@ con.sql(r"""
              ELSE 'other' END AS mobile_format,
            count(*) AS n
     FROM app.customers GROUP BY ALL ORDER BY n DESC
-""").df()
+""")
 
 # %% [markdown]
 # ✏️ **Exercise** · Do the same for `event_time` in the delivery events. Build `time_formats` with columns `format`, `n`,
@@ -219,23 +221,24 @@ time_formats = con.sql(rf"""
            count(*) AS n
     FROM read_json_auto('{RAW}/events/delivery_events.jsonl')
     GROUP BY ALL ORDER BY n DESC
-""").df()
+""")
 # END SOLUTION
 time_formats
 
 # %%
-U.check(len(time_formats) == 3 and "other" not in set(time_formats.format), "three timestamp formats, nothing else")
+found = [f for f, _ in time_formats.fetchall()]
+U.check(len(found) == 3 and "other" not in found, "three timestamp formats, nothing else")
 
 # %% [markdown]
 # And the supplier price files: compare the inferred schema of two weeks.
 
 # %%
 for week in ["W37", "W38", "W39"]:
-    cols = con.sql(f"DESCRIBE SELECT * FROM read_csv('{RAW}/suppliers/prices_2026-{week}.csv')").df()
-    print(week, dict(zip(cols.column_name, cols.column_type)))
+    cols = con.sql(f"SELECT column_name, column_type FROM (DESCRIBE FROM read_csv('{RAW}/suppliers/prices_2026-{week}.csv'))")
+    print(week, dict(cols.fetchall()))
 
 # %%
-con.sql(f"SELECT sku, unit_cost FROM read_csv('{RAW}/suppliers/prices_2026-W38.csv') WHERE unit_cost NOT LIKE '%,%' LIMIT 3").df()
+con.sql(f"SELECT sku, unit_cost FROM read_csv('{RAW}/suppliers/prices_2026-W38.csv') WHERE unit_cost NOT LIKE '%,%' LIMIT 3")
 
 # %% [markdown]
 # 🔍 Week 37: `unit_cost` is a `DOUBLE`. Week 38: the same column is `VARCHAR` because the supplier's Excel export used
@@ -267,23 +270,28 @@ issues += [
      "severity": "medium", "fix_in": "Day 2 tests + quarantine"},
     {"source": "app.orders", "issue": "timestamps are UTC text; business days are Riyadh time", "evidence": "VARCHAR created_at",
      "severity": "medium", "fix_in": "Day 2 staging: cast + convert time zone"},
-    {"source": "delivery_events", "issue": "three timestamp formats", "evidence": len(time_formats),
+    {"source": "delivery_events", "issue": "three timestamp formats", "evidence": len(found),
      "severity": "high", "fix_in": "Day 2 staging / Day 3 streaming parser"},
     {"source": "suppliers", "issue": "W39 renamed unit_cost -> cost_sar, added currency", "evidence": "schema drift",
      "severity": "high", "fix_in": "Day 4 data contract"},
 ]
 # END SOLUTION
-issue_log = pd.DataFrame(issues)
-U.check(len(issue_log) >= 8, f"{len(issue_log)} issues logged")
-U.check(set(issue_log.severity) <= {"high", "medium", "low"}, "severity uses the agreed levels")
-issue_log
+U.check(len(issues) >= 8, f"{len(issues)} issues logged")
+U.check({i["severity"] for i in issues} <= {"high", "medium", "low"}, "severity uses the agreed levels")
+for i in issues:
+    print(f"{i['severity']:7s} {i['source']:16s} {i['issue']}")
 
 # %% [markdown]
 # Save it: issue logs belong in the repository next to the code, not in someone's head.
 
 # %%
+import csv
+
 out = U.lab_dir("D1_1") / "issue_log.csv"
-issue_log.to_csv(out, index=False)
+with open(out, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=list(issues[0]))   # one column per key
+    writer.writeheader()
+    writer.writerows(issues)
 print("saved", out)
 
 # %% [markdown]
@@ -295,7 +303,7 @@ print(open(U.RAW / "DATA_ISSUES.txt", encoding="utf-8").read())
 con.sql(f"""
     SELECT count(*) - count(DISTINCT event_id) AS duplicate_events
     FROM read_json_auto('{RAW}/events/delivery_events.jsonl')
-""").df()
+""")
 
 # %% [markdown]
 # ## ✱ Stretch · Find the National Day spike and explain it
@@ -305,14 +313,14 @@ con.sql(f"""
 
 # %%
 # BEGIN SOLUTION
-peak = daily.loc[daily.orders.idxmax()]
-print("peak day:", peak.day.date(), "| orders:", peak.orders)
+peak_day, peak_orders = max(daily.fetchall(), key=lambda row: row[1])
+print("peak day:", peak_day, "| orders:", peak_orders)
 con.sql("""
     SELECT coalesce(promo_code, '(none)') AS promo, count(*) AS orders
     FROM app.orders
     WHERE (created_at::TIMESTAMP + INTERVAL 3 HOUR)::DATE = DATE '2026-09-23'
     GROUP BY ALL ORDER BY orders DESC
-""").df()
+""")
 # END SOLUTION
 
 # %% [markdown]

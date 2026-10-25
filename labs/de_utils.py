@@ -32,6 +32,12 @@ DBT_PROJECT = LABS / "dbt_qafila"
 # Quick mode shrinks workloads (slow laptops, CI).
 QUICK = os.getenv("DE_QUICK", "0") == "1"
 
+# Command-line tools (dbt) sit next to the interpreter. A kernel started without the venv activated doesn't have them
+# on PATH, and dagster-dbt looks for `dbt` there.
+_BIN = str(Path(sys.executable).parent)
+if _BIN not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = _BIN + os.pathsep + os.environ.get("PATH", "")
+
 try:  # optional .env with LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
     from dotenv import load_dotenv
 
@@ -148,7 +154,7 @@ def build_warehouse(force: bool = False, path: Path = WAREHOUSE_DB) -> Path:
     ensure_data()
     if path.exists() and not force:
         con = duckdb.connect(str(path), read_only=True)
-        ok = con.sql("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'raw'").fetchone()[0] >= 9
+        ok = con.sql("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'raw'").fetchall()[0][0] >= 9
         con.close()
         if ok:
             return path
@@ -373,7 +379,23 @@ def run_dbt(args: list[str], project_dir: Path | str = DBT_PROJECT, db_path: Pat
     res = dbtRunner().invoke(cli)
     if not res.success:
         raise RuntimeError(f"dbt {' '.join(args)} failed: {res.exception or 'see the log above'}")
-    return res
+    return DbtResult(res)
+
+
+class DbtResult:
+    """dbt's result (.success, .result, .exception), shown as nothing when a cell ends with a dbt call.
+
+    dbtRunnerResult's own repr spells out every node of the run: thousands of lines after a `dbt build`.
+    """
+
+    def __init__(self, res):
+        self._res = res
+
+    def __getattr__(self, name):
+        return getattr(self._res, name)
+
+    def _ipython_display_(self):
+        pass
 
 
 # ---------------------------------------------------------------------------

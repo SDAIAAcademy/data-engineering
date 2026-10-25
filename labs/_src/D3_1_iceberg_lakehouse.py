@@ -285,3 +285,24 @@ print("unreferenced data files still on disk:", len(after_files - still_referenc
 # 2. What does the catalog store, and why is it the single point every engine must agree on?
 # 3. Hidden partitioning: what problem from Lab 1.2 does it solve?
 # 4. Time travel and the right to erasure pull in opposite directions. How would you reconcile them at Qafila?
+#
+# ## 🖼️ Visual summary
+#
+# **1 · The metadata tree.** Drawn from the table's metadata after Task 4 (`meta_path`, before the ✱ Stretch expired
+# anything). Every commit added a snapshot; each snapshot's manifest list points to manifests, and manifests point to
+# data files. Snapshots **share** manifests and files they didn't change: an append only adds. Dark nodes are what the
+# current snapshot reads; grey nodes are reachable only by time travel, which is why their files can't be deleted yet.
+
+# %%
+import de_viz as V
+
+V.iceberg_tree(meta_path)
+
+# %% [markdown]
+# **2 · Time travel, snapshot by snapshot** (from Task 3's `history`). PyIceberg commits the upsert as two snapshots:
+# S3 removes the old versions of the five orders, S4 appends the refunded versions. S5 is the erasure delete: fewer
+# rows now, but S1 to S4 still show them.
+
+# %%
+V.bars(history.assign(snapshot=[f"S{i} {op}" for i, op in enumerate(history.operation, 1)]), "snapshot",
+       ["rows", "refunded"], titles=["rows visible in the snapshot", "refunded orders"])

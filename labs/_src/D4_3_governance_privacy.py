@@ -234,9 +234,9 @@ con.create_function("pseudo", lambda v: pseudonymize(v), ["VARCHAR"], "VARCHAR")
 people, twice = con.sql("""
     SELECT count(DISTINCT t), count(DISTINCT t) FILTER (WHERE n > 1)
     FROM (SELECT pseudo(national_id) AS t, count(*) OVER (PARTITION BY pseudo(national_id)) AS n FROM customers)
-""").fetchone()
+""").fetchall()[0]
 # END SOLUTION
-accounts = con.sql("SELECT count(*) FROM customers").fetchone()[0]
+accounts = con.sql("SELECT count(*) FROM customers").fetchall()[0][0]
 print(f"{accounts:,} accounts, {people:,} people, {twice} people with more than one account")
 U.check(twice == 58, "the 58 duplicate people are still detectable, without seeing a single ID")
 U.check(pseudonymize("1000000008") == pseudonymize("1000000008") != pseudonymize("1000000008", b"other-key"), "stable per key")
@@ -319,7 +319,7 @@ def files_containing(value: str) -> list[str]:
     """Every Parquet file on disk under the table location whose national_id column contains `value`."""
     hits = []
     for f in (LAKE / "crm" / "customers" / "data").rglob("*.parquet"):
-        n = duckdb.sql(f"SELECT count(*) FROM '{f.as_posix()}' WHERE national_id = '{value}'").fetchone()[0]
+        n = duckdb.sql(f"SELECT count(*) FROM '{f.as_posix()}' WHERE national_id = '{value}'").fetchall()[0][0]
         if n:
             hits.append(f.name)
     return hits

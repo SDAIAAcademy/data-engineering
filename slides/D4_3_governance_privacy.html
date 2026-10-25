@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D4_3 · Governance, security &amp; privacy · Modern Data Engineering</title>
+<link rel="icon" href="../assets/img/academy.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Arabic:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<link rel="stylesheet" href="../assets/deck/deck.css">
+</head>
+<body>
+<div class="deck" data-day="Day 4" data-course="Modern Data Engineering">
+
+<section class="slide section" data-session="Session 3 · Governance & privacy">
+  <div class="kicker">Session 3</div>
+  <h1>Governance, security &amp; privacy</h1>
+  <ul class="bullets outcomes tight">
+    <li>Relate PDPL and NDMO requirements to concrete pipeline features</li>
+    <li>Discover, classify and protect personal data</li>
+    <li>Implement and verify a right-to-erasure request</li>
+  </ul>
+  <div class="sess-no">03</div>
+</section>
+
+<section class="slide top" data-label="You are here">
+  <div class="kicker">Govern</div>
+  <h2>Who may see which data, and for how long</h2>
+  <div class="pmap" data-here="govern"></div>
+  <aside class="notes">Governance runs across every stage: personal data enters at the sources and is copied into every layer after. PDPL and NDMO rules apply to all of them, which is why masking, access and erasure are platform features, not one model's job.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">The Saudi context</div>
+  <h2>PDPL and NDMO, from a data engineer's seat</h2>
+  <div class="cols cols-2">
+    <div class="stack dense">
+      <div class="card c-teal flat"><b>PDPL</b> (Personal Data Protection Law, enforced since September 2024; SDAIA is the competent authority): lawful purpose, data minimization, data subjects' rights (access, correction, <b>erasure</b>), breach notification, conditions on transfers outside the Kingdom.</div>
+      <div class="card c-cyan flat"><b>NDMO</b> data management and personal data protection standards: governance roles, data catalog, quality, and <b>classification</b> in four levels: <b>Top Secret, Secret, Restricted, Public</b>.</div>
+    </div>
+    <table class="t small">
+      <tr><th>Requirement</th><th>Pipeline feature</th></tr>
+      <tr><td>Know what you hold</td><td>PII discovery, catalog tags</td></tr>
+      <tr><td>Minimize, limit access</td><td>masked views, role grants, pseudonyms</td></tr>
+      <tr><td>Erase on request</td><td>deletes + snapshot expiry + orphan cleanup</td></tr>
+      <tr><td>Keep data in the Kingdom</td><td>storage region, backups, LLM endpoints</td></tr>
+      <tr><td>Show compliance</td><td>lineage, access logs, retention jobs</td></tr>
+    </table>
+  </div>
+  <p class="xsmall muted mt-s mb0">Engineering view only, not legal advice: your organization's DPO and policies decide classifications and retention.</p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Discovery</div>
+  <h2>Find personal data by content, then confirm with checksums</h2>
+  <div class="cols cols-2">
+    <pre class="code s" data-file="Lab 4.3"><code class="language-python">def is_saudi_id(s):            # national ID / Iqama
+    if not (len(s) == 10 and s.isdigit()
+            and s[0] in "12"):   # 1 citizen, 2 resident
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(s)):
+        d = int(ch) * (2 if i % 2 else 1)
+        total += d - 9 if d &gt; 9 else d
+    return total % 10 == 0       # Luhn
+
+def is_saudi_iban(s):          # SA + 22, ISO 13616
+    r = s[4:] + s[:4]
+    return int("".join(str(int(c, 36))
+               for c in r)) % 97 == 1</code></pre>
+    <div class="stack small">
+      <div class="callout note">Column names lie (<code>notes</code>, <code>ref</code>, <code>extra_1</code>). Lab 4.3 finds national IDs, IBANs, mobiles and emails hiding in <b>free-text support notes</b>.</div>
+      <div class="callout tip">A regex finds 83 ten-digit candidates in the notes; the Luhn check keeps <b>77</b> real IDs and drops the tracking numbers.</div>
+      <div class="callout warn">Some PII has no pattern (names, addresses): declare it in the catalog.</div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Protection techniques</div>
+  <h2>Mask, pseudonymize, anonymize, encrypt</h2>
+  <table class="t small">
+    <tr><th>Technique</th><th>Example</th><th>Reversible?</th><th>Still personal data?</th></tr>
+    <tr><td><b>Masking</b></td><td><code>+9665•••••24</code>, <code>a•••@gmail.com</code></td><td>no (for the viewer)</td><td>the base table is</td></tr>
+    <tr class="hl"><td><b>Pseudonymization</b></td><td>HMAC-SHA256(national ID, secret key)</td><td>by whoever holds the key</td><td><b>yes</b></td></tr>
+    <tr><td><b>Anonymization</b></td><td>aggregates, k-anonymity, differential privacy</td><td>no</td><td>no, if done properly (hard!)</td></tr>
+    <tr><td><b>Encryption</b></td><td>at rest, in transit, per column</td><td>with the key</td><td>yes</td></tr>
+  </table>
+  <div class="cols cols-2 mt">
+    <div class="callout warn small"><b>Plain hashing isn't pseudonymization.</b> Lab 4.3: an attacker with 500 leaked IDs re-identifies all 500 from unsalted SHA-256 hashes; with HMAC and no key, zero.</div>
+    <div class="callout tip small">HMAC tokens still let analysts find the <b>58 people with two accounts</b>, without seeing a single ID.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Access control</div>
+  <h2>Each role sees only what it needs</h2>
+  <div class="cols cols-2">
+    <pre class="code s" data-file="Lab 4.3"><code class="language-sql">CREATE VIEW analyst.customers AS
+SELECT pseudo(national_id) AS person_token,
+       customer_id, city, district,
+       lower(split_part(email, '@', 2))
+           AS email_domain,
+       created_at
+FROM main.customers;
+
+CREATE VIEW support.customers AS
+SELECT customer_id, full_name, email,
+       mask_mobile(mobile) AS mobile, city
+FROM main.customers;</code></pre>
+    <div class="stack small">
+      <div class="card c-navy flat"><b>RBAC</b>: roles get grants on schemas/views, never on raw PII tables.</div>
+      <div class="card c-teal flat"><b>Policies in the platform</b>: column masks and row filters (Snowflake, BigQuery, Unity Catalog) apply in every tool, not just one view.</div>
+      <div class="card c-coral flat"><b>Tag-based</b>: classify once (<code>Secret</code>), and the policy follows the tag to every table.</div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Right to erasure</div>
+  <h2><code>DELETE</code> is only step one</h2>
+  <div class="flow">
+    <div class="step c-navy"><b>1 · Delete</b>new snapshot without the row</div>
+    <div class="arrow">→</div>
+    <div class="step c-teal"><b>2 · Expire</b>old snapshots: no time travel</div>
+    <div class="arrow">→</div>
+    <div class="step c-cyan"><b>3 · Remove orphans</b>unreferenced files leave the disk</div>
+    <div class="arrow">→</div>
+    <div class="step c-coral"><b>4 · Verify</b>scan files: the ID is gone</div>
+  </div>
+  <div class="cols cols-2 mt">
+    <div class="callout warn small"><b>Lab 4.3:</b> after the delete, the current table has 0 rows for the customer, but time travel returns 1 and a Parquet file on disk still holds their national ID, until steps 2–3.</div>
+    <div class="callout note small"><b>Also:</b> derived tables and incremental models, backups, partner exports, column stats in old manifests. At scale: batch erasures weekly, or <b>crypto-shredding</b> (per-person keys, delete the key).</div>
+  </div>
+</section>
+
+<section class="slide quiz">
+  <div class="kicker">Checkpoint</div>
+  <h2>You replaced national IDs with SHA-256 hashes (no key). Is the table anonymized?</h2>
+  <div class="opts">
+    <div class="opt" data-k="A">Yes: SHA-256 can't be reversed</div>
+    <div class="opt" data-k="B" data-ok>No: anyone with candidate IDs can hash them and match; at best it's pseudonymized, and weakly</div>
+    <div class="opt" data-k="C">Yes, as long as the column is renamed</div>
+  </div>
+  <div class="why callout tip small"><b>B.</b> Identifiers come from small, guessable spaces. Use a keyed hash (HMAC) with the key in a secret manager, and treat the result as personal data.</div>
+</section>
+
+<section class="slide lab top">
+  <div class="cols cols-2">
+    <div>
+      <div class="lab-tag">Lab 4.3 · 25 min</div>
+      <h2>Governance, security and privacy</h2>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb" target="_blank" rel="noopener">labs/D4_3_governance_privacy.ipynb ↗</a>
+      <p class="small mt">Find Saudi PII by content, classify it, pseudonymize it, mask it per role, and erase a customer for real.</p>
+    </div>
+    <ul class="checklist">
+      <li>PII discovery: validators, not just regexes <span class="min">6'</span></li>
+      <li>Classify every column (NDMO levels) <span class="min">4'</span></li>
+      <li>Pseudonymize with a keyed hash <span class="min">5'</span></li>
+      <li>Masked views per role <span class="min">5'</span></li>
+      <li>Right to erasure on Iceberg, verified <span class="min">5'</span></li>
+      <li class="stretch">✱ Redact free text before it reaches an LLM</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide break" data-label="Break">
+  <div class="kicker">Break</div>
+  <h1>10-minute break</h1>
+  <div class="timer" data-minutes="10"></div>
+  <p class="lead">Next: Session 4 · Data for AI + capstone kickoff</p>
+</section>
+
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/deck/logo.js"></script>
+<script src="../assets/deck/deck.js"></script>
+</body>
+</html>

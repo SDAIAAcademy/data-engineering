@@ -46,7 +46,11 @@ from dagster_dbt import DbtCliResource, dbt_assets
 LAB = U.lab_dir("D4_1", reset=True)
 DB = LAB / "qafila.duckdb"                    # a private copy of the warehouse for this lab
 shutil.copy(U.build_warehouse(), DB)
-U.run_dbt(["parse"], db_path=DB, quiet=True)  # writes target/manifest.json, which Dagster reads
+os.environ["QAFILA_DUCKDB"] = DB.resolve().as_posix()   # profiles.yml reads the warehouse path from here
+# Silver + gold as Day 2 left them. dbt runs in its own process, so the file is free again when it ends;
+# it also writes target/manifest.json, which Dagster reads.
+setup_dbt = DbtCliResource(project_dir=str(U.DBT_PROJECT), profiles_dir=str(U.DBT_PROJECT))
+setup_dbt.cli(["build", "--quiet"], target_path=Path("target")).wait()
 EVENTS = (U.RAW / "events" / "delivery_events.jsonl").as_posix()
 QUIET = {"loggers": {"console": {"config": {"log_level": "CRITICAL"}}}}   # keep notebook output readable
 

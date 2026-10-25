@@ -55,7 +55,7 @@ def _load_app_table(table: str):
     try:
         con.sql(f"ATTACH '{RAW}/qafila_oltp.sqlite' AS app (TYPE sqlite, READ_ONLY)")
         con.sql(f"CREATE OR REPLACE TABLE raw.{table} AS SELECT *, now()::TIMESTAMP AS _loaded_at FROM app.{table}")
-        return con.sql(f"SELECT count(*) FROM raw.{table}").fetchone()[0]
+        return con.sql(f"SELECT count(*) FROM raw.{table}").fetchall()[0][0]
     finally:
         con.close()
 

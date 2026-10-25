@@ -228,6 +228,56 @@
     setMinutes(el, st.minutes);
   });
 
+  /* ---------- the Qafila platform map: <div class="pmap" data-here="cdc,dagster"></div> ----------
+     The same data and packing as de_viz.platform_map (labs/de_viz.py) and the story's map slide
+     (assets/story/story.js): change all three together. data-here lists tool / band keys to mark. */
+  const STAGES = ['sources', 'ingest', 'store', 'transform', 'test', 'serve'];
+  const SOURCES = [['App database', 'qafila_oltp.sqlite'], ['Payments API', 'pages, cursor, 429s'],
+    ['CDC feed', 'inserts, updates, deletes'], ['Click events', 'a stream'], ['Supplier files', 'weekly CSVs'],
+    ['Reviews', 'free text']];
+  const TOOLS = [
+    ['dlt', 'dlt', 'ingest', 'ingest', 'incremental loads, schema drift', 'D1_3'],
+    ['duckdb', 'DuckDB', 'store', 'serve', 'the SQL engine in every lab', 'D1_1'],
+    ['cdc', 'CDC + MERGE', 'ingest', 'ingest', 'changes, deletes, SCD2', 'D1_4'],
+    ['parquet', 'Parquet', 'store', 'store', 'columnar files', 'D1_2'],
+    ['polars', 'Polars', 'transform', 'test', 'DataFrames, lazy plans, checks', 'D2_1'],
+    ['semantic', 'Semantic layer', 'serve', 'serve', 'metrics defined once', 'D4_4'],
+    ['streaming', 'Streaming', 'ingest', 'ingest', 'events as they happen', 'D3_3 · D3_4'],
+    ['iceberg', 'Iceberg', 'store', 'store', 'tables on files, time travel', 'D3_1'],
+    ['dbt', 'dbt', 'transform', 'test', 'models, tests, docs, lineage', 'D2_2 · D2_3'],
+    ['ai', 'Embeddings', 'serve', 'serve', 'search, text-to-SQL', 'D4_4'],
+    ['spark', 'Spark', 'transform', 'transform', 'the same work on a cluster', 'D3_2'],
+    ['pandera', 'Pandera', 'test', 'test', 'schemas for DataFrames', 'D2_4'],
+    ['contracts', 'Contracts', 'test', 'test', 'ODCS: what consumers rely on', 'D4_2'],
+  ];
+  const BANDS = [['dagster', 'Orchestrate', 'Dagster: assets, schedules, checks', 'D4_1'],
+    ['observe', 'Observe', 'freshness, volume, schema, distribution, lineage', 'D4_2'],
+    ['govern', 'Govern', 'PDPL, masking, access', 'D4_3']];
+  document.querySelectorAll('.pmap').forEach((el) => {
+    const here = (el.dataset.here || '').split(',').map((k) => k.trim()).filter(Boolean);
+    const marked = new Set();
+    TOOLS.forEach(([k, , a, b]) => { if (here.includes(k)) STAGES.slice(STAGES.indexOf(a), STAGES.indexOf(b) + 1).forEach((s) => marked.add(s)); });
+    const focus = here.length > 0;
+    const rows = [], cells = [];
+    TOOLS.forEach(([k, name, a, b, what, sessions]) => {
+      const c0 = STAGES.indexOf(a) + 1, c1 = STAGES.indexOf(b) + 1, span = [];
+      for (let c = c0; c <= c1; c++) span.push(c);
+      let r = rows.findIndex((used) => span.every((c) => !used.has(c)));
+      if (r < 0) { rows.push(new Set()); r = rows.length - 1; }
+      span.forEach((c) => rows[r].add(c));
+      const covers = STAGES.slice(c0 - 1, c1).some((s) => marked.has(s));
+      const cls = here.includes(k) ? 'on' : (focus && !covers ? 'dim' : '');
+      cells.push(`<div class="pm-t ${cls}${c0 === c1 ? ' narrow' : ''}" style="grid-column:${c0}/${c1 + 1};grid-row:${r + 2}"><i>${sessions}</i><b>${name}</b><small>${what}</small></div>`);
+    });
+    const n = Math.max(rows.length, SOURCES.length);
+    const srcDim = focus && !marked.has('sources') && !marked.has('ingest') ? ' dim' : '';
+    SOURCES.forEach(([name, what], i) => cells.push(`<div class="pm-s narrow${srcDim}" style="grid-column:1;grid-row:${i + 2}"><b>${name}</b><small>${what}</small></div>`));
+    BANDS.forEach(([k, name, what, sessions], i) => cells.push(`<div class="pm-b ${here.includes(k) ? 'on' : (focus ? 'dim' : '')}" style="grid-column:2/-1;grid-row:${n + 2 + i}"><i>${sessions}</i><b>${name}</b><small>${what}</small></div>`));
+    const heads = STAGES.map((s, i) => `<div class="pm-h${marked.has(s) ? ' on' : ''}" style="grid-column:${i + 1};grid-row:1">${s}</div>`).join('');
+    const cols = STAGES.map((s, i) => (marked.has(s) ? `<div class="pm-col" style="grid-column:${i + 1};grid-row:1/${n + 2}"></div>` : '')).join('');
+    el.innerHTML = cols + heads + cells.join('');
+  });
+
   /* ---------- quizzes: click an option to reveal ---------- */
   document.querySelectorAll('.quiz').forEach((q) => {
     q.querySelectorAll('.opt').forEach((o) => o.addEventListener('click', () => q.classList.add('revealed')));
@@ -244,7 +294,7 @@
       show(i);
       const body = s.querySelector(".body");
       if (body.scrollHeight > body.clientHeight + 2) issues.push((i + 1) + ": body overflows by " + (body.scrollHeight - body.clientHeight) + "px");
-      s.querySelectorAll("pre, table, .card, .flow, .callout").forEach((el) => {
+      s.querySelectorAll("pre, table, .card, .flow, .callout, .pmap > div").forEach((el) => {
         if (el.scrollHeight > el.clientHeight + 2) issues.push((i + 1) + ": " + el.tagName.toLowerCase() + "." + el.className + " overflows y by " + (el.scrollHeight - el.clientHeight) + "px");
         if (el.scrollWidth > el.clientWidth + 2) issues.push((i + 1) + ": " + el.tagName.toLowerCase() + "." + el.className + " overflows x by " + (el.scrollWidth - el.clientWidth) + "px");
       });

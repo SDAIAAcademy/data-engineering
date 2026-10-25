@@ -294,7 +294,7 @@ q("SELECT _file, count(unit_cost) AS unit_cost, count(unit_cost__v_text) AS unit
 
 # %% [markdown]
 # 🔍 dlt never fails on these files: week 38's text values land in a **variant column** `unit_cost__v_text`, and week
-# 39's renamed column becomes a new column, leaving `unit_cost` empty. The raw layer is complete, but a naive report
+# 39's renamed column becomes a new column, leaving `unit_cost` empty. The bronze zone (`raw`) is complete, but a naive report
 # on `unit_cost` silently loses two weeks. Tolerant ingestion needs strict validation downstream (Lab 2.4) and a
 # contract with the supplier (Lab 4.2).
 
