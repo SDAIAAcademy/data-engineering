@@ -109,3 +109,6 @@ em.k.bad{color:#a4473b;background:#f6dcd6}.t-row.total{border-top:2px solid #9fb
 .label.strip{height:34px;border:1.5px solid #91a9b9;border-radius:3px;background:#fff}
 .label.foot{height:264px;display:flex;align-items:center;justify-content:center;border:2px solid #348f8d;border-radius:4px 8px 5px 3px;background:#e0f2eb;color:#1b6f68;font:600 18px var(--sans)}
 .label.right{text-align:right}
+/* D4_2 contracts and monitors: one column per day of orders, a dot over each day a monitor alerts on. */
+.label.vcol span{display:block;background:#9fcbc1;border-radius:2px 2px 0 0}.vcol.peak span{background:#d9c27e}.vcol.bad span{background:#c46558}.vcol.cal span{background:#8faac6}
+.label.vmark{height:13px;border-radius:50%;background:#c46558;box-shadow:0 0 0 3px #fbeee9}
