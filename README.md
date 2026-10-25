@@ -14,7 +14,7 @@
 
 Day 1 opens with the [course introduction](https://sdaiaacademy.github.io/data-engineering/slides/00_intro.html) and the [architecture story](https://sdaiaacademy.github.io/data-engineering/slides/00_story.html): warehouse, lake, lakehouse, the Qafila platform map and one order's journey through it.
 
-Each day has four sessions with a short break between them and a longer one at mid-day. Every session is taught first, then practised in a 25-minute lab.
+Each day has four sessions. Every session is taught first, then practised in a 25-minute lab.
 
 🖥️ Concept sessions are taught from a slide deck in `slides/` (for example `D1_4_cdc_scd.html`) that follows Khalid's order 5043883 with real course data, building each idea one piece at a time; the original illustrated story versions are kept under `slides/story/`. 📓 Tool sessions are taught from a walkthrough notebook in `labs/tools/`, with no slides (a read-only copy with every output is in `labs/tools/html/`). The course page links each session to what it is taught from, its lab and the solution.
 
