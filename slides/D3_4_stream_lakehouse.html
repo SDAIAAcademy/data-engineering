@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D3_4 · Streams into the lakehouse · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 </head>
@@ -133,13 +133,13 @@
   <div class="quiz">
     <p class="lead">Batch 177 is in the table. checkpoint.json still says 13488. Predict first: which number does the restart read?</p>
     <div class="opts">
-      <div class="opt" data-k="A">At 13500: the table already has batch 177</div>
-      <div class="opt" data-k="B" data-ok>At 13488: batch 177 is appended a second time</div>
-      <div class="opt" data-k="C">Iceberg rolls the commit back, so nothing repeats</div>
+      <div class="opt" data-k="A" data-ok>At 13488: batch 177 is appended a second time</div>
+      <div class="opt" data-k="B">Iceberg rolls the commit back, so nothing repeats</div>
+      <div class="opt" data-k="C">At 13500: the table already has batch 177</div>
     </div>
-    <div class="callout tip why"><b>Yes.</b> The file still says 13488, so batch 177 is read and appended again. A would need the job to look at the table, which this design does not do. C: the commit had finished, and Iceberg never undoes a finished commit. A restart trusts the saved offset, whatever the table already holds.</div>
+    <div class="callout tip why"><b>Yes.</b> The file still says 13488, so batch 177 is read and appended again. C would need the job to look at the table, which this design does not do. B: the commit had finished, and Iceberg never undoes a finished commit. A restart trusts the saved offset, whatever the table already holds.</div>
   </div>
-  <aside class="notes">Allow 45 seconds and let learners commit. B is right: the job reads 13488 from the file and processes batch 177 again; the table has no idea it is the same batch, so it appends it as a new snapshot. C is the common misconception: the commit had finished, and Iceberg never undoes a finished commit. A would need the job to look at the table, which this design doesn't do. Demo 3.4 section 2 runs this crash live (at batch 30 over two days).<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
+  <aside class="notes">Allow 45 seconds and let learners commit. A is right: the job reads 13488 from the file and processes batch 177 again; the table has no idea it is the same batch, so it appends it as a new snapshot. B is the common misconception: the commit had finished, and Iceberg never undoes a finished commit. C would need the job to look at the table, which this design doesn't do. Demo 3.4 section 2 runs this crash live (at batch 30 over two days).<p class="small">Sources: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></p></aside>
 </section>
 
 <section class="slide" data-label="03 / Where did it stop?">

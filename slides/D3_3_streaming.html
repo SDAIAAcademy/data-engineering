@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D3_3 · Streaming fundamentals · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 <style>table.t.tight th, table.t.tight td { padding: 4px 10px; }</style>
@@ -243,13 +243,13 @@
     <p class="lead">The offset was saved before the work. What happens to the rest of the batch? Predict first: which number did the reader save?</p>
     <p class="small muted">Operations: “Where is Khalid’s order?”</p>
     <div class="opts">
-      <div class="opt" data-k="A">It reads 3336–3340 again: all five twice</div>
-      <div class="opt" data-k="B" data-ok>It starts at 3341: 3339 and 3340 are never read</div>
-      <div class="opt" data-k="C">Kafka re-sends what wasn’t processed</div>
+      <div class="opt" data-k="A">Kafka re-sends what wasn’t processed</div>
+      <div class="opt" data-k="B">It reads 3336–3340 again: all five twice</div>
+      <div class="opt" data-k="C" data-ok>It starts at 3341: 3339 and 3340 are never read</div>
     </div>
-    <div class="callout tip why"><b>Yes.</b> The saved offset points past the batch, so Khalid’s last two events are never read. A restart resumes from the last saved offset, wherever the work had got to. A would need the offset saved after the work, and C is the common misconception: Kafka does not track what you processed, only the offset you saved.</div>
+    <div class="callout tip why"><b>Yes.</b> The saved offset points past the batch, so Khalid’s last two events are never read. A restart resumes from the last saved offset, wherever the work had got to. B would need the offset saved after the work, and A is the common misconception: Kafka does not track what you processed, only the offset you saved.</div>
   </div>
-  <aside class="notes">Allow 45 seconds and let learners commit. B is right: the saved offset already points past the batch, so the restart skips 3339 and 3340, Khalid’s “on the way” and “delivered”. C is the common misconception: Kafka does not track what you processed, only the offset you saved. Then ask: what if it saved after the work instead?</aside>
+  <aside class="notes">Allow 45 seconds and let learners commit. C is right: the saved offset already points past the batch, so the restart skips 3339 and 3340, Khalid’s “on the way” and “delivered”. A is the common misconception: Kafka does not track what you processed, only the offset you saved. Then ask: what if it saved after the work instead?</aside>
 </section>
 
 <section class="slide" data-label="05 / A crash">

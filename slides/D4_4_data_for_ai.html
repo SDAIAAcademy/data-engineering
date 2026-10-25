@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D4_4 · Data for AI · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 </head>
@@ -86,13 +86,13 @@
   <div class="quiz">
     <p class="lead">Predict first: which fix still holds when Finance changes the definition?</p>
     <div class="opts">
-      <div class="opt" data-k="A">Paste the dashboard’s SQL into the assistant’s prompt</div>
-      <div class="opt" data-k="B" data-ok>Define revenue once, and have all three ask for that metric</div>
-      <div class="opt" data-k="C">Fine-tune the model on Finance’s reports</div>
+      <div class="opt" data-k="A" data-ok>Define revenue once, and have all three ask for that metric</div>
+      <div class="opt" data-k="B">Fine-tune the model on Finance’s reports</div>
+      <div class="opt" data-k="C">Paste the dashboard’s SQL into the assistant’s prompt</div>
     </div>
-    <div class="callout tip why"><b>Yes.</b> One definition in one place: change it once, and every consumer follows, compiled for each of them, so the number is the same by construction. A fixes today’s prompt and breaks the day the dashboard’s SQL changes. C makes the model better at guessing, not right: it learns last quarter’s numbers, not the definition.</div>
+    <div class="callout tip why"><b>Yes.</b> One definition in one place: change it once, and every consumer follows, compiled for each of them, so the number is the same by construction. C fixes today’s prompt and breaks the day the dashboard’s SQL changes. B makes the model better at guessing, not right: it learns last quarter’s numbers, not the definition.</div>
   </div>
-  <aside class="notes">Allow 45 seconds. B is right: a metric defined once, in one file, compiled to SQL for the dashboard, the notebook and the assistant. A fixes today’s prompt and breaks the day the dashboard’s SQL changes; the notebook still disagrees. C makes the model better at guessing, not right: it learns last quarter’s numbers, not the definition. If someone picks A or C, ask what happens when Finance adds delivery fees next month. The next chapter builds B.</aside>
+  <aside class="notes">Allow 45 seconds. A is right: a metric defined once, in one file, compiled to SQL for the dashboard, the notebook and the assistant. C fixes today’s prompt and breaks the day the dashboard’s SQL changes; the notebook still disagrees. B makes the model better at guessing, not right: it learns last quarter’s numbers, not the definition. If someone picks C or B, ask what happens when Finance adds delivery fees next month. The next chapter builds A.</aside>
 </section>
 
 <section class="slide" data-label="02 / Semantic layer">

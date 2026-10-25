@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D4_3 · Governance, security and privacy · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 </head>
@@ -222,13 +222,13 @@
   <div class="quiz">
     <p class="lead">Compliance asks: "Is it still personal data?" Predict first: what does an attacker with a leaked list of IDs do?</p>
     <div class="opts">
-      <div class="opt" data-k="A">Yes: a hash can't be turned back into the ID</div>
-      <div class="opt" data-k="B" data-ok>No: anyone with a list of IDs can hash them and match</div>
-      <div class="opt" data-k="C">Yes, as long as the column is renamed</div>
+      <div class="opt" data-k="A">Yes, as long as the column is renamed</div>
+      <div class="opt" data-k="B">Yes: a hash can't be turned back into the ID</div>
+      <div class="opt" data-k="C" data-ok>No: anyone with a list of IDs can hash them and match</div>
     </div>
-    <div class="callout tip why"><b>B is right.</b> Hash every ID on a leaked list and look the results up. Nobody needs to reverse the hash: they hash every candidate and compare, which is why A fails. C confuses obscurity with protection. Identifiers come from small, guessable spaces: hashing them doesn't hide them.</div>
+    <div class="callout tip why"><b>C is right.</b> Hash every ID on a leaked list and look the results up. Nobody needs to reverse the hash: they hash every candidate and compare, which is why B fails. A confuses obscurity with protection. Identifiers come from small, guessable spaces: hashing them doesn't hide them.</div>
   </div>
-  <aside class="notes">Allow 45 seconds. B is right. A is the common misconception: nobody needs to reverse the hash; they hash every candidate and compare. National IDs have 10 digits with a check digit, so a laptop can hash all possible IDs in a short time, and a leaked list is faster still. C confuses obscurity with protection. The next slide runs the attack.</aside>
+  <aside class="notes">Allow 45 seconds. C is right. B is the common misconception: nobody needs to reverse the hash; they hash every candidate and compare. National IDs have 10 digits with a check digit, so a laptop can hash all possible IDs in a short time, and a leaked list is faster still. A confuses obscurity with protection. The next slide runs the attack.</aside>
 </section>
 
 <section class="slide" data-label="05 / Pseudonymize">

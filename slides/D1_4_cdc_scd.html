@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D1_4 · Change data capture and history · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 <style>
@@ -202,13 +202,13 @@ pre.code.mt-s { margin-top: 14px; }
   <div class="quiz">
     <p class="lead small">Overwrite our copy with each event’s after image, in arrival order. Where does customer 100898 live at the end? Choose an answer, then say which event is applied last.</p>
     <div class="opts">
-      <div class="opt" data-k="A">Jeddah · Al Hamra</div>
-      <div class="opt" data-k="B" data-ok>Dammam · Al Nuzha</div>
-      <div class="opt" data-k="C">Two rows, one per city</div>
+      <div class="opt" data-k="A" data-ok>Dammam · Al Nuzha</div>
+      <div class="opt" data-k="B">Two rows, one per city</div>
+      <div class="opt" data-k="C">Jeddah · Al Hamra</div>
     </div>
     <div class="callout tip why"><b>Yes.</b> #360 arrives last, and its after image still says Dammam. Each event carries the whole row, not only what changed, so people who answer Jeddah are thinking of events as “what changed”. Two rows cannot happen here: each event overwrites the same row.</div>
   </div>
-  <aside class="notes">Allow 45 seconds. B is correct: #360 is applied last, and its after image is the whole row as it was at 17:15, city Dammam included. A is the common answer: people think of events as “what changed”. C cannot happen here: each event overwrites the same row.</aside>
+  <aside class="notes">Allow 45 seconds. A is correct: #360 is applied last, and its after image is the whole row as it was at 17:15, city Dammam included. C is the common answer: people think of events as “what changed”. B cannot happen here: each event overwrites the same row.</aside>
 </section>
 
 <section class="slide" data-label="04 / Order by lsn">

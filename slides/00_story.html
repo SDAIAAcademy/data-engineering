@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Warehouse, lake, lakehouse · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 </head>
@@ -291,13 +291,13 @@
   <div class="quiz">
     <p class="lead">The data scientist’s notebook read a mixture of old and new files: “Which result can I trust?” Choose an answer, then explain what guarantee it changes.</p>
     <div class="opts">
-      <div class="opt" data-k="A">Rename the folder “Gold”</div>
-      <div class="opt" data-k="B" data-ok>Use atomic table commits and compatible readers</div>
-      <div class="opt" data-k="C">Move the same files to a bigger server</div>
+      <div class="opt" data-k="A" data-ok>Use atomic table commits and compatible readers</div>
+      <div class="opt" data-k="B">Move the same files to a bigger server</div>
+      <div class="opt" data-k="C">Rename the folder “Gold”</div>
     </div>
     <div class="callout tip why"><b>Yes.</b> Readers use one committed table version. The others fail: renaming a folder or moving to a bigger server does not make a multi-file update atomic. Explain what changes for the reader, as well as the technology you would choose.</div>
   </div>
-  <aside class="notes">Allow 45 seconds. B is correct. Ask what A and C fail to change. Follow up: does the table format also remove duplicate E7 events? No, that requires a data transformation rule.<p class="small">Sources: <a href="https://iceberg.apache.org/docs/latest/reliability/">Apache Iceberg · reliability</a></p></aside>
+  <aside class="notes">Allow 45 seconds. A is correct. Ask what C and B fail to change. Follow up: does the table format also remove duplicate E7 events? No, that requires a data transformation rule.<p class="small">Sources: <a href="https://iceberg.apache.org/docs/latest/reliability/">Apache Iceberg · reliability</a></p></aside>
 </section>
 
 <section class="slide" data-label="05 / The guarantee">

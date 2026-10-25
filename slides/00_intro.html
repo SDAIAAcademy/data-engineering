@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Course introduction · Modern Data Engineering</title>
-<link rel="icon" href="https://sdaiaacademy.github.io/slides/img/academy.svg">
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
 </head>
@@ -184,13 +184,13 @@
   <div class="quiz">
     <p class="lead">Order 5043883. Where do you look?</p>
     <div class="opts">
-      <div class="opt" data-k="A">The order's row in the app database</div>
-      <div class="opt" data-k="B" data-ok>The delivery events from the courier app</div>
-      <div class="opt" data-k="C">The payment record</div>
+      <div class="opt" data-k="A">The payment record</div>
+      <div class="opt" data-k="B">The order's row in the app database</div>
+      <div class="opt" data-k="C" data-ok>The delivery events from the courier app</div>
     </div>
     <div class="callout tip why"><b>Yes:</b> the picked_up event, 01:46. The order row now says only "delivered", and the payment knows only money. The current state cannot tell you about the past; only a record of what happened can.</div>
   </div>
-  <aside class="notes">Allow 30 seconds; ask the room to say why the other two cannot answer it. B is right: the picked_up event at 01:46. A is the common wrong answer: people expect the app database to hold everything, but its row says only delivered. C knows only money. The lesson for the week: if a question is about history, we must keep the history, because most sources do not.</aside>
+  <aside class="notes">Allow 30 seconds; ask the room to say why the other two cannot answer it. C is right: the picked_up event at 01:46. B is the common wrong answer: people expect the app database to hold everything, but its row says only delivered. A knows only money. The lesson for the week: if a question is about history, we must keep the history, because most sources do not.</aside>
 </section>
 
 <section class="slide" data-label="02 / The records">
