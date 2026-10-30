@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 2 · Modern Data Engineering</title>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 2">
+<section class="slide title" data-label="Welcome">
+  <div class="kicker">SDAIA Academy · Modern Data Engineering</div>
+  <h1>Ingest and clean</h1>
+  <p class="lead mt">Day 2: get data into the platform safely, keep it current, and make it trustworthy</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>4 teaching days + capstone day</span>
+    <span>4 sessions · 4 labs</span>
+    <span>For fresh CS graduates</span>
+  </div>
+  <aside class="notes">Yesterday you stored and queried data that was already there. Today you get it there yourself: from an API, from a change feed, and from messy files. Remind everyone now and at the end of the day: capstone teams are formed by the end of today. Then start with the three review questions.</aside>
+</section>
+
+<section class="slide" data-label="Review">
+  <div class="kicker">Review of Day 1</div>
+  <h2>Rows and columns</h2>
+  <div class="quiz">
+    <p class="lead">Finance sums one column of a table with many columns. Why is a column store fast at this?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">It keeps every row on its own page, so rows are easy to find</div>
+      <div class="opt" data-k="B">It builds an index on every column as it loads</div>
+      <div class="opt" data-k="C" data-ok>It reads only the columns the query names</div>
+      <div class="opt" data-k="D">It keeps the whole table in memory</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> The values of one column sit together on disk, so the engine reads that column and skips the rest. Row stores read whole rows.</div>
+  </div>
+  <aside class="notes">Review of Day 1, Session 2. Answer C. One minute per question: read it, take a show of hands, click.</aside>
+</section>
+
+<section class="slide" data-label="Review">
+  <div class="kicker">Review of Day 1</div>
+  <h2>Parquet</h2>
+  <div class="quiz">
+    <p class="lead">A Parquet file is sorted by date. You ask for one day. What lets the engine skip most of the file?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>The min and max stored for each row group</div>
+      <div class="opt" data-k="B">The file's compression</div>
+      <div class="opt" data-k="C">The CSV header</div>
+      <div class="opt" data-k="D">A folder per customer</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Each row group records the min and max of every column. Sorted data makes those ranges narrow, so whole groups can be skipped.</div>
+  </div>
+  <aside class="notes">Review of Day 1, Session 4. Answer A. Compression shrinks the file but doesn't let you skip it.</aside>
+</section>
+
+<section class="slide" data-label="Review">
+  <div class="kicker">Review of Day 1</div>
+  <h2>Window functions</h2>
+  <div class="quiz">
+    <p class="lead">You want the newest row per customer. Which window function does it, keeping number 1?</p>
+    <div class="opts">
+      <div class="opt" data-k="A"><code>rank() OVER (ORDER BY updated_at)</code></div>
+      <div class="opt" data-k="B"><code>row_number() OVER (PARTITION BY customer_id ORDER BY updated_at)</code></div>
+      <div class="opt" data-k="C"><code>sum(1) OVER (PARTITION BY customer_id)</code></div>
+      <div class="opt" data-k="D" data-ok><code>row_number() OVER (PARTITION BY customer_id ORDER BY updated_at DESC)</code></div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Partition per customer, newest first, keep row 1. Without DESC you keep the oldest. You'll use exactly this in Session 3.</div>
+  </div>
+  <aside class="notes">Review of Day 1, Session 3. Answer D. Tell them to hold on to this one: today's change feed needs it.</aside>
+</section>
+
+<section class="slide" data-label="Agenda">
+  <div class="kicker">Today</div>
+  <h2>Ingest and clean</h2>
+  <div class="agenda">
+    <div class="item now"><div><b>Session 1 · Batch ingestion by hand</b><small>Pages, a 429 and backoff, full vs. incremental, cursors, idempotent loads</small></div></div>
+    <div class="item"><div><b>Session 2 · Ingestion with dlt</b><small>The same job in a few lines: resources, write dispositions, a new column</small></div></div>
+    <div class="item"><div><b>Session 3 · Changes and history</b><small>Why copies go stale, a change feed, latest per key, MERGE, SCD Type 2</small></div></div>
+    <div class="item"><div><b>Session 4 · Bronze to silver with Polars</b><small>Expressions, three timestamp formats, duplicates, Riyadh time, Parquet</small></div></div>
+  </div>
+  <div class="callout note mt"><b>By the end of today.</b> Form your capstone team.</div>
+  <aside class="notes">Four sessions, each about 25 minutes of ideas and a 25-minute lab. Labs stand alone: if you don't finish one, the next still works. Say the capstone reminder out loud: teams are formed by the end of today.</aside>
+</section>
+
+<section class="slide section" data-session="S1 · Batch ingestion by hand">
+  <div class="kicker">Session 1</div>
+  <h1>Batch ingestion by hand</h1>
+  <ul class="bullets outcomes"><li>Follow an API's pages and survive a 429 with backoff</li><li>Choose between a full load and an incremental load with a cursor</li><li>Prove that running a load twice changes nothing</li></ul>
+  <div class="sess-no">01</div>
+  <aside class="notes">You write the loader yourself this session, so that in Session 2 you know exactly what the library is doing for you.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Today: get data in, then make it trustworthy</h2>
+  <p class="lead small">The Qafila platform. Today's four sessions light up the ingest stage, then the first step of transform.</p>
+  <div class="pmap" data-here="dlt,cdc,polars"></div>
+  <aside class="notes">The map from Day 1. Yesterday you worked in the store column with DuckDB and Parquet. Today: dlt and CDC in ingest, Polars in transform. Bronze is the zone that keeps data as it was sent; silver is the cleaned version. Sessions 1 and 2 load bronze, Session 3 follows changes, Session 4 builds silver.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Finance needs the payments, refunds included</h2>
+  <p class="lead small">Every day. The payment provider only offers an HTTP API, so someone has to write the code in between.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-1-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-1-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-1-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-1-em)" d="M205 110 L505 110"/><path class="wire em" marker-end="url(#arr-D2-1-em)" d="M725 110 L985 110"/><path class="wire " marker-end="url(#arr-D2-1-normal)" d="M1205 110 L1265 110"/></svg><figure class="figure" style="left:0px;top:10px;width:200px;margin:0"><div class="art payment" aria-hidden="true"></div><figcaption>Provider</figcaption><p class="detail">pages of JSON, on request</p></figure><div class="label hand muted" style="left:250px;top:62px;width:240px">HTTP requests</div><figure class="figure" style="left:515px;top:10px;width:200px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>You</figcaption><p class="detail">a loader script</p></figure><div class="label hand muted" style="left:810px;top:62px;width:120px">rows</div><figure class="figure" style="left:995px;top:10px;width:200px;margin:0"><div class="art warehouse" aria-hidden="true"></div><figcaption>Warehouse</figcaption><p class="detail">bronze: payments</p></figure><figure class="figure" style="left:1270px;top:10px;width:170px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption><p class="detail">“Revenue, net of refunds?”</p></figure><p class="annotation teal" style="left:0px;top:360px;width:1440px">A provider can change a payment weeks later: a refund updates the same record.</p></div>
+  <div class="callout tip"><b>Ingestion.</b> Copying data from a source into your platform's bronze zone, as it was sent. This session you do it by hand.</div>
+  <aside class="notes">Recap of the case: Khalid pays for order 5043883 by card, the provider records it, and Finance needs it in the warehouse. A refund weeks later changes the same payment. The provider is a local mock in the lab, U.PaymentsAPI, which behaves like a real one: pages, a cursor parameter, rate limits.</aside>
+</section>
+
+<section class="slide top">
+  <h2>An API answers one page at a time</h2>
+  <p class="lead small">Each answer holds at most 500 records, and says what to ask for next.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-2-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-2-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-2-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-2-em)" d="M722 75 L752 75"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-2-em)" d="M892 75 L922 75"/><path class="wire em frag" data-frag="c" marker-end="url(#arr-D2-2-em)" d="M1062 75 L1092 75"/><path class="wire em frag" data-frag="d" marker-end="url(#arr-D2-2-em)" d="M1232 75 L1262 75"/></svg><div class="label tbl mono" style="left:0px;top:0px;width:530px"><div class="t-title">GET /payments?page=1</div><div class="t-row " style="grid-template-columns:150px 1fr"><span>data</span><span>[ 500 payments ]</span></div><div class="t-row " style="grid-template-columns:150px 1fr"><span>page</span><span>1</span></div><div class="t-row hit" style="grid-template-columns:150px 1fr"><span>next_page</span><span>2</span></div><div class="t-row " style="grid-template-columns:150px 1fr"><span>next</span><span>http://…&page=2</span></div></div><div class="label rec copy" style="left:580px;top:40px;width:140px"><b>page 1</b><span>500</span></div><div class="label rec copy frag" data-frag="a" style="left:755px;top:40px;width:135px"><b>page 2</b><span>500</span></div><div class="label rec copy frag" data-frag="b" style="left:925px;top:40px;width:135px"><b>page 3</b><span>500</span></div><div class="label rec copy frag" data-frag="c" style="left:1095px;top:40px;width:135px"><b>page 4</b><span>500</span></div><div class="label rec chg frag" data-frag="d" style="left:1265px;top:40px;width:175px"><b>page 5</b><span>8 · next: null</span></div><div class="label check frag" data-frag="d" style="left:580px;top:150px;width:860px"><b>2,008</b> payments since 12 September, in <b>5</b> requests</div><div class="label code" style="left:0px;top:275px;width:1440px">rows, page = [], 1<br>while page:<br>&nbsp;&nbsp;&nbsp;&nbsp;body = get(url, {"updated_since": since, "page": page})<br>&nbsp;&nbsp;&nbsp;&nbsp;rows += body["data"]<br>&nbsp;&nbsp;&nbsp;&nbsp;page = body["next_page"]</div><p class="annotation teal" style="left:620px;top:370px;width:820px">Python reads the JSON <b>null</b> as None, which ends the loop.</p></div>
+  <div class="callout tip"><b>Pagination.</b> Keep asking for the next page until the answer says there isn't one.</div>
+  <aside class="notes">Lab 2.1 tasks 1 and 2. Run: 2,008 payments since 12 September, five requests, the last page has 8. updated_since is the time filter: only records changed at or after it. Ask: what could go wrong between page 2 and page 3? Common failure in the lab: forgetting to move page on, which loops forever on page 1.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Call too often, and the API answers 429</h2>
+  <p class="lead small">A rate limit protects the provider. Real ones hit you every night, so your loader must expect it.</p>
+  <div class="board"><div class="label hand muted" style="left:0px;top:0px;width:500px">REQUESTS, IN ORDER →</div><div class="label rec copy" style="left:0px;top:45px;width:200px"><b>page 1</b><span>200 OK</span></div><div class="label rec copy" style="left:225px;top:45px;width:200px"><b>page 2</b><span>200 OK</span></div><div class="label rec copy" style="left:450px;top:45px;width:200px"><b>page 3</b><span>200 OK</span></div><div class="label rec wrong" style="left:675px;top:45px;width:280px"><b>page 4</b><span>429 · Retry-After: 1</span></div><p class="annotation red" style="left:985px;top:45px;width:455px">A plain loop dies here: nothing loaded.</p><div class="label reason frag" data-frag="b" style="left:0px;top:180px;width:400px"><b>Backoff</b><br>wait, try again, wait longer each time</div><div class="label fee frag" data-frag="b" style="left:420px;top:190px;width:90px">1 s</div><div class="label fee frag" data-frag="b" style="left:525px;top:190px;width:90px">2 s</div><div class="label fee frag" data-frag="b" style="left:630px;top:190px;width:90px">4 s</div><div class="label fee frag" data-frag="b" style="left:735px;top:190px;width:90px">8 s</div><div class="label rec copy frag" data-frag="b" style="left:985px;top:170px;width:455px"><b>page 4</b><span>200 OK, second try</span></div><p class="annotation  frag" data-frag="c" style="left:0px;top:280px;width:1440px">If the server says how long (the Retry-After header), believe it.</p><div class="label check frag" data-frag="c" style="left:0px;top:370px;width:1440px">With backoff: <b>9,720</b> payments, <b>24</b> requests, <b>4</b> of them answered 429. Nothing lost.</div></div>
+  <div class="callout tip"><b>429 Too Many Requests.</b> Not an error in your data: an instruction to slow down. <b>Backoff</b> is the polite answer.</div>
+  <aside class="notes">Lab 2.1 task 3. The mock answers 429 on every fifth request and sends Retry-After: 1. The plain loop's real output: 429 Client Error on page=4. Real clients also add a little randomness, jitter, so that everyone who was throttled doesn't come back at the same moment.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Retry what can get better</h2>
+  <div class="cols cols-21 mt-s">
+    <pre class="code" data-file="lab 2.1"><code class="language-python">def get_with_retry(url, params, tries=6):
+    for attempt in range(tries):
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 429:
+            wait = float(r.headers.get("Retry-After", 2 ** attempt))
+            time.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise RuntimeError(f"gave up after {tries} tries")</code></pre>
+    <div class="stack dense">
+      <div class="art-row"><div class="art engineer" style="width:120px"></div><p class="small mb0">Your first exercise that real pipelines depend on.</p></div>
+      <div class="card c-teal"><h4>Retry</h4><p class="small mb0">429 and 5xx: "not now", or the server's fault</p></div>
+      <div class="card c-coral"><h4>Don't retry</h4><p class="small mb0">400 and 404: the same request fails the same way</p></div>
+    </div>
+  </div>
+  <div class="callout warn mt-s"><b>What goes wrong.</b> A retry with no limit hides a real outage. Give up after a few tries, and let the failure be seen.</div>
+  <aside class="notes">This is the exercise in task 3. The three lines inside the if are the student's. 2 ** attempt gives 1, 2, 4, 8 if the server sends no header. Common failure: forgetting continue, so the code falls through to raise_for_status and crashes anyway.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Full load or incremental load?</h2>
+  <p class="lead small">A full load fetches everything; an incremental load fetches what changed. One day after the first load (lab run).</p>
+  <div class="cols cols-12 mt-s">
+    <div class="art warehouse" style="width:210px;margin:auto"></div>
+    <div>
+      <h4>Payments fetched</h4>
+      <div class="bars">
+        <div class="row"><span>Full load</span><div class="bar c-coral" style="--w:100%"></div><span class="val">30,178</span></div>
+        <div class="row"><span>Incremental</span><div class="bar c-teal" style="--w:2.2%"></div><span class="val">668</span></div>
+      </div>
+      <h4 class="mt-s">Requests</h4>
+      <div class="bars">
+        <div class="row"><span>Full load</span><div class="bar c-coral" style="--w:100%"></div><span class="val">63</span></div>
+        <div class="row"><span>Incremental</span><div class="bar c-teal" style="--w:3.2%"></div><span class="val">2</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="callout note mt-s"><b>Full still has a job.</b> It's simplest for small tables, and it's the only way a plain query can notice a deleted row.</div>
+  <aside class="notes">Lab 2.1 task 4. These are the run's numbers. The gap grows every day, because the full load re-reads all of history. Ask: why would anyone ever run a full load? Small tables, like the 12 stores; and because a query on updated_at can never find a row that no longer exists. Session 3 solves that properly.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A cursor remembers how far you got</h2>
+  <p class="lead small">The highest updated_at you've loaded. Each run asks only for what changed at or after it.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-3-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-3-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-3-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire axis" marker-end="url(#arr-D2-3-normal)" d="M0 170 L1430 170"/></svg><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><path class="enclosure teal" d="M6 46 L888 44 Q896 45 895 54 L894 194 Q894 203 884 202 L8 203 Q0 203 1 193 L0 55 Q0 46 6 46Z"/></svg><div class="label hand muted" style="left:0px;top:0px;width:800px">PAYMENTS, SORTED BY updated_at →</div><div class="label answer center" style="left:200px;top:58px;width:460px"><b>29,526</b>already loaded</div><div class="label ptr teal" style="left:800px;top:212px;width:230px">cursor<br>14 Sep 23:47:47</div><div class="label answer center frag" data-frag="a" style="left:980px;top:58px;width:400px"><b>668</b>changed since</div><div class="label rec chg frag" data-frag="b" style="left:0px;top:290px;width:540px"><b>pay_9024485 · refunded on 14 Sep</b><span>created 7 Sep: a refund gives it a new updated_at</span></div><div class="label code frag" data-frag="a" style="left:600px;top:300px;width:840px">GET /payments?updated_since=2026-09-14T23:47:47.000Z</div><p class="annotation teal frag" data-frag="b" style="left:600px;top:370px;width:840px">An old payment comes back when it changes. That's the point.</p></div>
+  <div class="callout tip"><b>Cursor.</b> A saved value that says how far you've read. Here it's kept in a small table, <code>ingest_state</code>.</div>
+  <aside class="notes">pay_9024485 is real: created on 7 September, refunded on 14 September, so it appears in a query for changes since 14 September even though the payment is a week old. That's why the cursor is on updated_at, not created_at. The cursor is the highest updated_at from the previous run.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Run it twice: is the table the same?</h2>
+  <p class="lead small">Schedulers retry and people press run twice. The same 29,526 payments, loaded two ways.</p>
+  <div class="board"><div class="stage-box quarantine" style="left:0px;top:0px;width:680px"><h3>Insert what you fetched</h3><div class="data-row"><span>first run</span><span>29,526 · 5,002,481 SAR</span></div><div class="data-row" style="color:#b96251"><span>retry</span><span>59,052 · 10,004,962 SAR</span></div></div><div class="stage-box  frag" data-frag="b" style="left:760px;top:0px;width:680px"><h3>Upsert on payment_id</h3><div class="data-row"><span>first run</span><span>29,526 · 5,002,481 SAR</span></div><div class="data-row"><span>re-run</span><span>29,526 · 5,002,481 SAR</span></div></div><div class="label code frag" data-frag="b" style="left:760px;top:235px;width:680px">DELETE FROM payments WHERE payment_id IN (SELECT payment_id FROM batch);<br>INSERT INTO payments SELECT * FROM batch;</div><p class="annotation red" style="left:0px;top:235px;width:680px">Twice the revenue. No error anywhere.</p><p class="annotation teal frag" data-frag="b" style="left:0px;top:350px;width:1440px">Upsert: the new row replaces the old one, and a new key is simply added.</p></div>
+  <div class="callout tip"><b>Idempotent.</b> Running a load twice gives the same result as running it once. That's what makes a retry safe.</div>
+  <aside class="notes">Lab 2.1 task 5. The doubled numbers are real: 59,052 rows and 10,004,962 SAR, with no error. Finance's number is simply wrong the next morning. The exercise writes the two statements on the right. Session 3 shows MERGE, which does this in one statement.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Three runs, and Khalid's payment arrives</h2>
+  <p class="lead small">The whole loader: read the cursor, fetch what changed, upsert it, move the cursor.</p>
+  <div class="cols cols-21 mt-s">
+    <table class="t">
+      <tr><th>Run</th><th class="num">Fetched</th><th class="num">Table rows</th><th class="num">Refunded</th></tr>
+      <tr><td>15 September</td><td class="num">29,526</td><td class="num">29,526</td><td class="num">2,568</td></tr>
+      <tr class="hl"><td>Re-run, same day</td><td class="num">1</td><td class="num">29,526</td><td class="num">2,568</td></tr>
+      <tr><td>29 September</td><td class="num">10,938</td><td class="num">40,402</td><td class="num">3,540</td></tr>
+    </table>
+    <div class="art-row"><div class="art customer" style="width:130px"></div><div class="rec good"><b>pay_9040078</b><span>order 5043883 · card · captured</span><i>89.50</i></div></div>
+  </div>
+  <div class="callout warn mt"><b>Still missing.</b> No column types, no reaction to the new <code>wallet_provider</code> field (dropped without a word), no record of which run wrote which row. Session 2.</div>
+  <aside class="notes">Why did the re-run fetch 1 row? updated_since is inclusive, so the newest row comes back every time. Keep it inclusive on purpose: two payments can share a timestamp, and a strict comparison could skip one. Overlap a little, and make the load idempotent. On 29 September: 10,938 fetched, but the table grew by only 10,876: 61 were refunds that replaced old rows, plus the 1 overlap. Khalid's payment for order 5043883 is in this run.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">Your job loaded 40 of 80 pages, then the laptop lost power. You run it again with today's upsert and the old cursor. What happens to the 40 pages?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">They're doubled, and you need to clean up by hand</div>
+      <div class="opt" data-k="B" data-ok>They're fetched again and replace themselves: nothing doubles</div>
+      <div class="opt" data-k="C">They're skipped, because the API remembers them</div>
+      <div class="opt" data-k="D">They're lost, and only pages 41 to 80 load</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> The cursor didn't move, so the run starts over; the upsert makes the overlap harmless. Only time is wasted.</div>
+  </div>
+  <aside class="notes">Answer B. The API remembers nothing about you: all the memory is on your side, in the cursor.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 2.1">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 2.1 · 25 min</div>
+      <h2>Ingest an API by hand</h2>
+      <p class="lead small">Pages, a 429, a cursor, and a load you can safely run twice, against the local payments API.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_1_api_ingestion.ipynb" target="_blank" rel="noopener">labs/D2_1_api_ingestion.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Make one request and read the response <span class="min">3 min</span></li>
+      <li>Follow every page <span class="min">5 min</span></li>
+      <li>Survive a 429 with backoff <span class="min">6 min</span></li>
+      <li>Compare a full load with an incremental load <span class="min">4 min</span></li>
+      <li>Prove a re-run doesn't double-load <span class="min">7 min</span></li>
+      <li class="stretch">✱ Stretch · Keep the rows and the cursor in one transaction</li>
+    </ul>
+  </div>
+  <aside class="notes">Three short exercises: the page loop, the 429 branch, the upsert. Each has a safety net, so a student who gets stuck still reaches the end. Typical problems: an endless loop from not updating page; forgetting continue after sleep. Stretch: a crash between the two writes, solved with BEGIN and COMMIT.</aside>
+</section>
+
+<section class="slide section" data-session="S2 · Ingestion with dlt">
+  <div class="kicker">Session 2</div>
+  <h1>Ingestion with dlt</h1>
+  <ul class="bullets outcomes"><li>Load an API incrementally into DuckDB in a few lines</li><li>Pick a write disposition per table: append, replace or merge</li><li>Explain what dlt does when the source adds a column</li></ul>
+  <div class="sess-no">02</div>
+  <aside class="notes">Same job as Session 1. Keep pointing back: this line replaces that loop.</aside>
+</section>
+
+<section class="slide top">
+  <h2>dlt does the same job in a few lines</h2>
+  <p class="lead small">dlt (data load tool) is a Python library. Each thing you wrote by hand has a one-line home.</p>
+  <div class="board"><figure class="figure" style="left:0px;top:40px;width:190px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>You</figcaption><p class="detail">less code to own</p></figure><div class="label tbl prose" style="left:240px;top:0px;width:1200px"><div class="t-title">By hand, then with dlt</div><div class="t-row h" style="grid-template-columns:270px 1fr 1fr"><span>job</span><span>Lab 2.1</span><span>dlt</span></div><div class="t-row " style="grid-template-columns:270px 1fr 1fr"><span>pages, 429s</span><span>the loop, get_with_retry</span><span><code>RESTClient</code></span></div><div class="t-row " style="grid-template-columns:270px 1fr 1fr"><span>cursor</span><span>the ingest_state table</span><span><code>dlt.sources.incremental</code></span></div><div class="t-row " style="grid-template-columns:270px 1fr 1fr"><span>upsert</span><span>load_upsert</span><span><code>write_disposition="merge"</code></span></div><div class="t-row " style="grid-template-columns:270px 1fr 1fr"><span>table, types</span><span>CREATE TABLE, COLS</span><span>inferred from the data</span></div><div class="t-row hit" style="grid-template-columns:270px 1fr 1fr"><span>record of runs</span><span>nothing</span><span><code>_dlt_loads</code>, <code>_dlt_load_id</code></span></div></div><p class="annotation teal" style="left:240px;top:350px;width:1200px">You still decide the key, the cursor and what a run does to old rows.</p></div>
+  <div class="callout tip"><b>A framework earns its place</b> when you've already seen what it replaces. You have.</div>
+  <aside class="notes">Expect the question: why not Airbyte or Fivetran? Same jobs, as a hosted service with ready-made connectors. dlt is a library: the pipeline is Python you can read, test and run anywhere. Every tool name in this course is an example, not an endorsement.</aside>
+</section>
+
+<section class="slide top">
+  <h2>The whole pipeline</h2>
+  <p class="lead small">A <b>resource</b> is a generator that yields rows, with load instructions on its decorator. A <b>pipeline</b> says where they go.</p>
+  <div class="cols cols-21 mt-s">
+    <pre class="code s" data-file="lab 2.2"><code class="language-python">client = RESTClient(base_url=BASE, data_selector="data",
+    paginator=JSONLinkPaginator(next_url_path="next"))
+
+@dlt.resource(name="payments", primary_key="payment_id",
+              write_disposition="merge")
+def payments(updated_at=dlt.sources.incremental(
+        "updated_at", initial_value="2026-08-01T00:00:00.000Z")):
+    yield from client.paginate("/payments",
+        params={"updated_since": updated_at.last_value})
+
+pipe = dlt.pipeline(pipeline_name="qafila_ingest",
+    destination=dlt.destinations.duckdb(str(LAKE_DB)),
+    dataset_name="raw")
+pipe.run(payments())</code></pre>
+    <div class="stack dense">
+      <div class="art warehouse" style="width:150px;margin:auto"></div>
+      <div class="stat"><div class="big">29,526</div><div class="lbl">rows in <code>raw.payments</code>, one per payment</div></div>
+      <p class="small mb0"><b>62</b> requests. dlt retried <b>2</b> 429s without a line of your code.</p>
+    </div>
+  </div>
+  <aside class="notes">Lab 2.2 task 1. The student writes one line: the yield from. Walk through it: the decorator is the upsert, the incremental argument is the cursor, RESTClient is the page loop and the retry. Common failure: forgetting to pass updated_at.last_value, which loads everything each run and is still correct, thanks to the merge, but slow.</aside>
+</section>
+
+<section class="slide top">
+  <h2>One run, three steps</h2>
+  <p class="lead small"><code>pipe.run</code> extracts, normalizes, then loads. Every step leaves files on disk.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-4-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-4-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-4-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-4-em)" d="M170 100 L216 100"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-4-em)" d="M522 100 L556 100"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-4-em)" d="M862 100 L896 100"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-4-em)" d="M1202 100 L1252 100"/></svg><figure class="figure" style="left:0px;top:10px;width:165px;margin:0"><div class="art payment" aria-hidden="true"></div><figcaption>API</figcaption></figure><div class="stage-box compact" style="left:220px;top:10px;width:300px"><h3>extract</h3><p>rows to files, in a new <b>load package</b></p></div><div class="stage-box compact frag" data-frag="a" style="left:560px;top:10px;width:300px"><h3>normalize</h3><p>infers the schema, picks the types</p></div><div class="stage-box compact frag" data-frag="b" style="left:900px;top:10px;width:300px"><h3>load</h3><p>creates tables, merges rows, saves the cursor</p></div><figure class="figure frag" data-frag="b" style="left:1260px;top:10px;width:180px;margin:0"><div class="art warehouse" aria-hidden="true"></div><figcaption>DuckDB</figcaption><p class="detail"><code>raw.payments</code></p></figure><p class="annotation teal frag" data-frag="c" style="left:220px;top:300px;width:1220px">The load fails? The package stays on disk, and the next run finishes it without calling the API again.</p></div>
+  <div class="callout tip"><b>Load package.</b> One run's rows as files. It separates a slow source from a destination that may fail.</div>
+  <aside class="notes">Extract can be slow: an API. Load can fail: a full disk. Because every package is files, a failed load is retried from the files, not from the source. You don't need to memorise the folder layout. Want more? tools/dlt.ipynb runs the steps one at a time.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A write disposition says what happens to old rows</h2>
+  <p class="lead small">Monday's export, then Tuesday's changes. The same two runs, three ways (a small example from <code>tools/dlt.ipynb</code>).</p>
+  <div class="board"><div class="label rec src" style="left:0px;top:0px;width:700px"><b>Monday's export</b><span>9001 · 9002 · 9003 captured</span></div><div class="label rec chg" style="left:740px;top:0px;width:700px"><b>Tuesday's changes</b><span>9003 refunded · 9004 captured</span></div><div class="label tbl mono frag" data-frag="a" style="left:0px;top:110px;width:450px"><div class="t-title">append · 5 rows</div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9001</span><span>captured</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9002</span><span>captured</span></div><div class="t-row unk" style="grid-template-columns:120px 1fr"><span>9003</span><span>captured</span></div><div class="t-row unk" style="grid-template-columns:120px 1fr"><span>9003</span><span>refunded</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9004</span><span>captured</span></div></div><div class="label tbl mono frag" data-frag="b" style="left:495px;top:110px;width:450px"><div class="t-title">replace · 2 rows</div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9003</span><span>refunded</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9004</span><span>captured</span></div></div><div class="label tbl mono frag" data-frag="c" style="left:990px;top:110px;width:450px"><div class="t-title">merge · 4 rows</div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9001</span><span>captured</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9002</span><span>captured</span></div><div class="t-row hit" style="grid-template-columns:120px 1fr"><span>9003</span><span>refunded</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span>9004</span><span>captured</span></div></div><div class="label reason frag" data-frag="a" style="left:0px;top:370px;width:450px"><b>Events and logs,</b> where every row is new</div><div class="label reason frag" data-frag="b" style="left:495px;top:370px;width:450px"><b>Small tables</b> sent whole: 12 stores</div><div class="label reason frag" data-frag="c" style="left:990px;top:370px;width:450px"><b>Records that change:</b> payments, orders</div></div>
+  <div class="callout tip"><b>Write disposition.</b> <code>append</code>, <code>replace</code> or <code>merge</code>. You pick one per table, on purpose.</div>
+  <aside class="notes">Append keeps both versions of 9003: the bug from Session 1. Replace is right only when each run sends everything. Merge has one row per payment, at its latest version. In the lab: stores use replace (12 rows, every time) and orders use merge on order_id (4,822 rows, unchanged by a re-run).</aside>
+</section>
+
+<section class="slide top">
+  <h2>The cursor lives with the data</h2>
+  <p class="lead small">Lab 2.1 kept it in a table you maintained. dlt stores it in the destination, in the same load as the rows.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-5-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-5-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-5-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-5-em)" d="M205 110 L290 110"/></svg><figure class="figure" style="left:0px;top:10px;width:195px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>Any machine</figcaption><p class="detail">local folder deleted? no problem</p></figure><div class="label tbl mono" style="left:300px;top:0px;width:1140px"><div class="t-title">DuckDB · schema raw</div><div class="t-row hit" style="grid-template-columns:340px 1fr"><span>payments</span><span>29,526 rows</span></div><div class="t-row hit" style="grid-template-columns:340px 1fr"><span>_dlt_pipeline_state</span><span>cursor 2026-09-14T23:47:47.000Z</span></div><div class="t-row " style="grid-template-columns:340px 1fr"><span>_dlt_loads</span><span>one row per load</span></div><div class="t-row " style="grid-template-columns:340px 1fr"><span>_dlt_version</span><span>every version of the schema</span></div></div><p class="annotation teal frag" data-frag="a" style="left:300px;top:240px;width:1140px">Written together: the cursor can't move ahead of the rows, or fall behind them.</p><div class="label check frag" data-frag="b" style="left:300px;top:340px;width:1140px">And <code>updated_at</code> is now <b>TIMESTAMP WITH TIME ZONE</b>, not text. Every row also carries <code>_dlt_load_id</code>.</div></div>
+  <div class="callout tip"><b>State.</b> What a pipeline remembers between runs. Keep it where the data is, and a new machine picks up where the old one stopped.</div>
+  <aside class="notes">Lab 2.2 task 2. Crash on the old design: save the cursor before the insert and a crash loses data; save it after and a crash loads rows twice. Storing it in the same load removes the choice. Lab 2.1's stretch built the same thing by hand with a transaction. The _dlt_ tables are dlt's own bookkeeping: read them, don't edit them.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Re-run it, and read the load log</h2>
+  <p class="lead small">The same proof as Lab 2.1, with two weeks of new payments and refunds.</p>
+  <div class="board"><figure class="figure" style="left:0px;top:20px;width:190px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption><p class="detail">“Where did this number come from?”</p></figure><div class="label check" style="left:240px;top:10px;width:1200px"><b>✓</b> re-run on 15 Sep: 29,526 → 29,526 rows</div><div class="label check frag" data-frag="a" style="left:240px;top:65px;width:1200px"><b>✓</b> 29 Sep: 40,402 rows, 40,402 ids: Khalid's payment is in</div><div class="label check frag" data-frag="a" style="left:240px;top:120px;width:1200px"><b>✓</b> 61 old payments replaced by the merge, all of them refunded</div><div class="label tbl sums frag" data-frag="b" style="left:240px;top:195px;width:800px"><div class="t-title">Rows each load owns today</div><div class="t-row " style="grid-template-columns:1fr 200px"><span>load 1 · 15 Sep · inserted 29,526</span><span>29,465</span></div><div class="t-row " style="grid-template-columns:1fr 200px"><span>load 2 · 29 Sep</span><span>10,937</span></div><div class="t-row total" style="grid-template-columns:1fr 200px"><span>every payment row traces to a load</span><span>40,402</span></div></div><p class="annotation teal frag" data-frag="b" style="left:1080px;top:240px;width:360px">29,526 − 61 refunds = 29,465</p></div>
+  <div class="callout tip"><b>Load log.</b> <code>_dlt_loads</code> plus <code>_dlt_load_id</code> on each row: row-level lineage, for free.</div>
+  <aside class="notes">Lab 2.2 tasks 3 and 5. The exercise counts the old payments carrying a newer load id: 61, all refunded. That's the proof that merge updated rows instead of appending. The re-run wrote no payments at all, so it owns no rows; the last two loads in the log are the app tables, and they own no payment rows either. Note 61 also explains Lab 2.1: 10,938 fetched, 10,876 new, 61 refunds and 1 overlap.</aside>
+</section>
+
+<section class="slide top">
+  <h2>The provider adds a column, and nobody tells you</h2>
+  <p class="lead small">From 15 September, wallet payments carry wallet_provider.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-6-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-6-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-6-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger" marker-end="url(#arr-D2-6-danger)" d="M205 90 L286 90"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-6-em)" d="M205 130 C260 210 250 270 286 290"/></svg><figure class="figure" style="left:0px;top:20px;width:195px;margin:0"><div class="art payment" aria-hidden="true"></div><figcaption>Provider</figcaption></figure><div class="label rec wrong" style="left:290px;top:50px;width:560px"><b>Lab 2.1 script: <code>COLS</code></b><span>the field is dropped, without a word</span></div><div class="label rec copy frag" data-frag="b" style="left:290px;top:250px;width:560px"><b>dlt: adds the column</b><span><code>raw.payments.wallet_provider</code>, NULL on older rows</span></div><div class="label tbl sums frag" data-frag="b" style="left:930px;top:20px;width:510px"><div class="t-title">Wallet payments</div><div class="t-row " style="grid-template-columns:1fr 120px"><span>no provider (older rows)</span><span>2,634</span></div><div class="t-row " style="grid-template-columns:1fr 120px"><span>mada pay</span><span>356</span></div><div class="t-row " style="grid-template-columns:1fr 120px"><span>urpay</span><span>320</span></div><div class="t-row " style="grid-template-columns:1fr 120px"><span>stc pay</span><span>296</span></div></div><p class="annotation teal frag" data-frag="c" style="left:930px;top:300px;width:510px">Nothing failed, nothing lost. But nobody was told, either.</p></div>
+  <div class="callout tip"><b>Schema evolution.</b> dlt changes the table to fit the data, and records each version in <code>_dlt_version</code>. Right for bronze.</div>
+  <aside class="notes">Lab 2.2 task 5. Good for bronze, which should keep everything sent. It's also a risk: the change happened silently, so something downstream has to care. dlt can also freeze a schema and fail instead, with schema_contract. Mention it, don't teach it.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Tolerant ingestion has a trap</h2>
+  <p class="lead small">A supplier's weekly price files. Week 38 switches to a decimal comma; week 39 renames the column. dlt loads all four.</p>
+  <div class="board"><figure class="figure" style="left:0px;top:20px;width:190px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Purchasing</figcaption><p class="detail">“Cost per week?”</p></figure><div class="label tbl sums" style="left:240px;top:0px;width:1200px"><div class="t-title">raw.supplier_prices · non-empty values per file</div><div class="t-row h" style="grid-template-columns:1fr 170px 230px 170px"><span>file</span><span>unit_cost</span><span>unit_cost__v_text</span><span>cost_sar</span></div><div class="t-row " style="grid-template-columns:1fr 170px 230px 170px"><span>week 36</span><span>160</span><span>0</span><span>0</span></div><div class="t-row " style="grid-template-columns:1fr 170px 230px 170px"><span>week 37</span><span>160</span><span>0</span><span>0</span></div><div class="t-row unk" style="grid-template-columns:1fr 170px 230px 170px"><span>week 38 · "9,49"</span><span>0</span><span>160</span><span>0</span></div><div class="t-row unk" style="grid-template-columns:1fr 170px 230px 170px"><span>week 39 · renamed</span><span>0</span><span>0</span><span>160</span></div></div><p class="annotation red frag" data-frag="a" style="left:240px;top:290px;width:1200px">A report on unit_cost silently loses two weeks. No error, no warning.</p><p class="annotation teal frag" data-frag="b" style="left:240px;top:370px;width:1200px">Bronze is complete, and that's good. Checks must catch it downstream.</p></div>
+  <div class="callout tip"><b>Trap.</b> A load that never fails can still deliver data nobody can use. Day 3 adds the tests that fail loudly (Lab 3.3).</div>
+  <aside class="notes">The lab's stretch runs this. Week 38's text can't go into a number column, so dlt writes a variant column, unit_cost__v_text, rather than guess or fail. Week 39 becomes a new column. Say what still isn't solved either: a cursor can't see a deleted row, which is the next session.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">A store closes and disappears from the nightly list of stores. Which write disposition removes it from your table?</p>
+    <div class="opts">
+      <div class="opt" data-k="A"><code>append</code></div>
+      <div class="opt" data-k="B"><code>merge</code> on store_id</div>
+      <div class="opt" data-k="C"><code>merge</code> with an incremental cursor</div>
+      <div class="opt" data-k="D" data-ok><code>replace</code></div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> A merge only touches the keys it receives, so a key that stops arriving stays forever. Replace makes the table equal the latest list.</div>
+  </div>
+  <aside class="notes">Answer D. The same limitation is why a cursor can't see deletes on big tables: that's Session 3.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 2.2">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 2.2 · 25 min</div>
+      <h2>The same job with dlt</h2>
+      <p class="lead small">The payments API and the app database land in DuckDB's <code>raw</code> schema, safe to re-run.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_2_dlt_pipeline.ipynb" target="_blank" rel="noopener">labs/D2_2_dlt_pipeline.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Write the resource and run the pipeline <span class="min">7 min</span></li>
+      <li>Read what dlt created: tables, columns, cursor <span class="min">3 min</span></li>
+      <li>Re-run it, then prove the merge updated rows <span class="min">5 min</span></li>
+      <li>Load the app tables: replace stores, merge orders <span class="min">5 min</span></li>
+      <li>Spot the new <code>wallet_provider</code> column; read the load log <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Load the supplier CSVs: what happens in week 39?</li>
+    </ul>
+  </div>
+  <aside class="notes">Three exercises: one line in the resource, one count, one sql_table call. The first load takes about 20 seconds, most of it dlt's normalize and load. If a student's resource fails, the check cell clears the pending package and carries on with the reference.</aside>
+</section>
+
+<section class="slide section" data-session="S3 · Changes and history">
+  <div class="kicker">Session 3</div>
+  <h1>Changes and history</h1>
+  <ul class="bullets outcomes"><li>Explain why a copy goes stale, and what a change feed adds</li><li>Handle the feed's duplicates and late events with latest-per-key and MERGE</li><li>Keep every version with SCD Type 2</li></ul>
+  <div class="sess-no">03</div>
+  <aside class="notes">Customer 100898 runs through this whole session. Find them in the feed in the lab.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Our copy still says Dammam</h2>
+  <p class="lead small">Customers change after they sign up. We copied customers from a snapshot on 1 September, and the teams read the copy, not the app.</p>
+  <div class="board"><div class="label off" data-id="tk-app" style="left:0px;top:14px;width:440px">the app · today</div><div class="label rec src" data-id="now" style="left:0px;top:40px;width:440px"><b>customer 100898</b><span>Jeddah · Al Hamra · yahoo email</span></div><div class="label off" data-id="tk-copy" style="left:1000px;top:14px;width:440px">our copy · from the 1 Sep snapshot</div><div class="label rec wrong" data-id="snap" style="left:1000px;top:40px;width:440px"><b>our copy · 100898</b><span>Dammam · Al Nuzha · icloud email</span></div><div class="label answer center" data-id="neq" style="left:560px;top:22px;width:320px"><b style="color:#b96251">≠</b>different rows</div><figure class="figure" data-id="f-fin" style="left:0px;top:190px;width:170px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Marketing</figcaption><p class="detail">“Spend by customer city?”</p></figure><p class="annotation red" style="left:230px;top:240px;width:1210px">Every report on our copy puts 100898 in Dammam.</p><div class="label check" data-id="counts" style="left:230px;top:330px;width:1210px">September: <b>6,158</b> changes to <b>4,542</b> customers</div><p class="annotation teal" style="left:230px;top:400px;width:1210px">Which rows changed, and how do we find out?</p></div>
+  <div class="callout tip"><b>A copy goes stale</b> the moment the source changes. We need to learn every change.</div>
+  <aside class="notes">Our copy is the 1 September snapshot: 6,060 customers. By 30 September the app has 7,442, and 4,542 customers changed in some way: signed up, edited their profile, or were erased. On 2 September, customer 100898 changed email at 17:15 and moved from Dammam to Jeddah at 18:49 (UTC, as the app writes them). The app keeps only the latest row. Marketing reports spend by customer city from our copy, so every one of 100898's orders still counts as Dammam. Ask the room how they'd find out which rows changed.</aside>
+</section>
+
+<section class="slide top">
+  <h2>How do we learn what changed?</h2>
+  <p class="lead small">Three ways. Each one sees customer 100898’s evening differently.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-3-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-3-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-3-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal frag" data-frag="3" data-id="best" d="M361 318 L1434 320 Q1442 321 1440 331 L1438 421 Q1439 432 1428 430 L355 429 Q348 430 350 417 L351 327 Q350 317 361 318Z"/></svg><div class="label reason" data-id="r1" style="left:0px;top:10px;width:330px"><b>Copy it all again, compare</b><br>a full snapshot every night</div><div class="label rec chg" data-id="see1" style="left:370px;top:10px;width:520px"><b>next night: one difference</b><span>Dammam → Jeddah, and a new email</span></div><p class="annotation " style="left:940px;top:5px;width:500px">The 17:15 version is never seen. Reads every row, every night.</p><div class="label reason frag" data-frag="2" data-id="r2" style="left:0px;top:175px;width:330px"><b>Ask for recent rows</b><br>updated_at after the last run: dlt’s cursor (Lab 2.2)</div><div class="label rec chg frag" data-frag="2" data-id="see2" style="left:370px;top:175px;width:520px"><b>next run: the row as it is now</b><span>Jeddah · Al Hamra · updated 18:49</span></div><p class="annotation red frag" data-frag="2" style="left:940px;top:160px;width:500px">Hard delete: the row is gone. 159 erasures never seen</p><p class="annotation  frag" data-frag="2" style="left:940px;top:240px;width:500px">Soft delete: just a flag, so it’s seen</p><div class="label reason frag" data-frag="3" data-id="r3" style="left:0px;top:340px;width:330px"><b>Read the database’s log</b><br>every change, as it is written</div><div class="label rec chg  frag" data-frag="3" data-id="e670" style="left:370px;top:340px;width:250px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg  frag" data-frag="3" data-id="e086" style="left:640px;top:340px;width:250px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><p class="annotation teal frag" data-frag="3" style="left:940px;top:335px;width:500px">Every insert, update and delete, in order, within seconds</p></div>
+  <div class="callout tip"><b>Change data capture (CDC):</b> learning every change a source makes. Reading the database's own log is the complete way.</div>
+  <aside class="notes">A build, one way per click. Snapshot compare: heavy, and it sees only the net change per night; the 17:15 version never shows up. Query on updated_at: what dlt's cursor did in Lab 2.2. Cheap, but it misses hard deletes, because the row is gone. Reading the log: the database writes every change to a log before it changes a table, and lsn, the log sequence number, is a change's position there. A connector such as Debezium reads it and sends each change on as an event. This is the only taxonomy slide you need.</aside>
+</section>
+
+<section class="slide top">
+  <h2>One change, as the feed writes it</h2>
+  <p class="lead small">Customer 100898’s move, as a change event (unchanged fields shortened).</p>
+  <div class="board"><div class="label tbl mono" data-id="ev-t" style="left:0px;top:0px;width:820px"><div class="t-title">change event · customers</div><div class="t-row " style="grid-template-columns:150px 1fr"><span>op</span><span>u</span></div><div class="t-row " style="grid-template-columns:150px 1fr"><span>before</span><span>{ city: Dammam, district: Al Nuzha, … }</span></div><div class="t-row " style="grid-template-columns:150px 1fr"><span>after</span><span>{ city: Jeddah, district: Al Hamra, … }</span></div><div class="t-row hit" style="grid-template-columns:150px 1fr"><span>source.lsn</span><span>5007086</span></div><div class="t-row " style="grid-template-columns:150px 1fr"><span>ts_ms</span><span>1788374988697 · 2 Sep 18:49:48</span></div></div><div class="label reason" data-id="k-op" style="left:880px;top:0px;width:560px"><b>op</b> · what happened<br>c create · u update · d delete</div><div class="label reason" data-id="k-img" style="left:880px;top:115px;width:560px"><b>before, after</b> · the whole row<br>name, mobile and national ID too</div><div class="label reason" data-id="k-lsn" style="left:880px;top:230px;width:560px"><b>source.lsn</b> · its place in the log<br>the true order of the changes</div><div class="label reason" data-id="k-ts" style="left:880px;top:345px;width:560px"><b>ts_ms</b> · the commit time<br>two changes can share a millisecond</div></div>
+  <div class="callout tip"><b>Change event:</b> what happened (<code>op</code>), the whole row before and after, and its place in the log (<code>lsn</code>).</div>
+  <aside class="notes">The real event from data/raw/cdc/customers_changes.jsonl. A delete has only before; an insert only after. The images are full rows, so personal data travels through the pipeline: remember that on Day 4. lsn orders every change; ts_ms can't, because milliseconds collide in a busy database. We use ts_ms later as the moment a version starts.</aside>
+</section>
+
+<section class="slide top">
+  <h2>The feed repeats itself, and arrives out of order</h2>
+  <p class="lead small">September’s feed holds 6,346 events. Here are customer 100898’s, in the order they arrived.</p>
+  <div class="board"><div class="label hand muted" data-id="arr-title" style="left:0px;top:0px;width:600px">ARRIVAL ORDER →</div><div class="label off" data-id="a-e670" style="left:0px;top:64px;width:440px">arrived #333</div><div class="label off" data-id="a-e086" style="left:490px;top:64px;width:440px">arrived #347</div><div class="label off" data-id="a-e670b" style="left:980px;top:64px;width:460px">arrived #360</div><div class="label rec chg " data-id="e670" style="left:0px;top:90px;width:440px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg " data-id="e086" style="left:490px;top:90px;width:440px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label rec chg dup" data-id="e670b" style="left:980px;top:90px;width:460px"><b>lsn 5006670</b><span>17:15 · email changed, re-sent</span></div><p class="annotation red" style="left:980px;top:180px;width:460px">lsn 5006670 again: re-sent after the connector restarted, and after a newer change</p><div class="label check" data-id="st-dup" style="left:0px;top:300px;width:800px"><b>188</b> events delivered twice (rows − distinct lsn)</div><div class="label check" data-id="st-ooo" style="left:0px;top:360px;width:800px"><b>3,492</b> arrived after an event with a higher lsn</div><p class="annotation teal" style="left:880px;top:300px;width:560px">Normal for CDC: restarts re-send, events overtake each other</p></div>
+  <div class="callout tip"><b>At-least-once delivery:</b> an event can arrive twice, and late. For a change feed that's normal, not a bug.</div>
+  <aside class="notes">The third event is a redelivery of the first: same lsn, same content, sent again after a connector restart, and it arrives after the move. Connectors would rather send an event twice than lose it. Lab 2.3 task 1 counts both across the feed: 6,346 events, 6,158 distinct lsns (188 repeats), and 3,492 events that arrived after one with a higher lsn.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Arrival order or log order?</h2>
+  <p class="lead small">Apply each event’s after image in turn: the last one applied wins.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-5-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-5-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-5-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger" marker-end="url(#arr-D2cdc-5-danger)" data-id="w-ra" d="M1092 65 L1126 65"/><path class="wire em frag" data-frag="2" marker-end="url(#arr-D2cdc-5-em)" data-id="w-rl" d="M802 285 L1126 285"/></svg><div class="label reason" data-id="lane-a" style="left:0px;top:35px;width:220px"><b>By arrival</b></div><div class="label off" data-id="a-e670" style="left:240px;top:4px;width:270px">arrived #333</div><div class="label off" data-id="a-e086" style="left:530px;top:4px;width:270px">arrived #347</div><div class="label off" data-id="a-e670b" style="left:820px;top:4px;width:270px">arrived #360</div><div class="label rec chg " data-id="e670" style="left:240px;top:30px;width:270px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg " data-id="e086" style="left:530px;top:30px;width:270px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label rec chg dup" data-id="e670b" style="left:820px;top:30px;width:270px"><b>lsn 5006670</b><span>17:15 · email changed, re-sent</span></div><div class="label rec wrong" data-id="snap" style="left:1130px;top:30px;width:310px"><b>our copy · 100898</b><span>Dammam · Al Nuzha ✗</span></div><div class="label reason frag" data-frag="2" data-id="lane-l" style="left:0px;top:250px;width:220px"><b>By lsn</b><br>repeats dropped</div><div class="label rec chg  frag" data-frag="2" data-id="s670" style="left:240px;top:250px;width:270px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg  frag" data-frag="2" data-id="s086" style="left:530px;top:250px;width:270px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label rec copy frag" data-frag="2" data-id="res-l" style="left:1130px;top:250px;width:310px"><b>our copy · 100898</b><span>Jeddah · Al Hamra ✓</span></div><p class="annotation red frag" data-frag="3" style="left:0px;top:390px;width:700px">Exactly 1 of 7,442 customers in September’s feed, and no error</p><p class="annotation teal frag" data-frag="2" style="left:780px;top:390px;width:660px">By lsn: 0 differences from the app</p></div>
+  <div class="callout tip"><b>Trust the log position, not the arrival order.</b> Then repeats and late events do no harm.</div>
+  <aside class="notes">A build. By arrival, the stale 17:15 image is written last and the copy goes back to Dammam. By lsn, Jeddah wins. Customer 100898 is the only customer in September's feed whose last arrival isn't their last change, which is exactly why this bug survives testing: the totals look right and nothing fails. Lab 2.3 task 4 proves it: missing 1, extra 1.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Keep only the last change per customer</h2>
+  <p class="lead small">Applying changes needs one row per customer. Drop the repeats, then number each customer's events newest first and keep number 1.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-7-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-7-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-7-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2cdc-7-em)" data-id="w-d1" d="M342 75 C440 75 450 125 546 125"/><path class="wire em" marker-end="url(#arr-D2cdc-7-em)" data-id="w-d2" d="M342 175 C440 175 450 225 546 225"/><path class="wire danger" marker-end="url(#arr-D2cdc-7-danger)" data-id="w-d3" d="M342 275 C400 275 410 275 420 275"/><path class="wire em frag" data-frag="2" marker-end="url(#arr-D2cdc-7-em)" data-id="w-l1" d="M892 225 C990 225 1000 175 1096 175"/><path class="wire danger frag" data-frag="2" marker-end="url(#arr-D2cdc-7-danger)" data-id="w-d4" d="M892 125 L940 125"/></svg><div class="label hand muted" data-id="h1" style="left:0px;top:0px;width:340px">Feed · 6,346 events</div><div class="label hand muted" data-id="h2" style="left:550px;top:0px;width:340px">Distinct lsn · 6,158</div><div class="label rec chg " data-id="e670" style="left:0px;top:40px;width:340px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg " data-id="e086" style="left:0px;top:140px;width:340px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label rec chg dup" data-id="e670b" style="left:0px;top:240px;width:340px"><b>lsn 5006670</b><span>17:15 · email changed, re-sent</span></div><div class="label ptr red" data-id="x-dup" style="left:428px;top:258px;width:30px">✕</div><div class="label rec chg " data-id="s670" style="left:550px;top:90px;width:340px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg " data-id="s086" style="left:550px;top:190px;width:340px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label hand muted frag" data-frag="2" data-id="h3" style="left:1100px;top:0px;width:340px">Per customer · 4,542</div><div class="label ptr red frag" data-frag="2" data-id="x-old" style="left:948px;top:108px;width:30px">✕</div><div class="label rec chg  frag" data-frag="2" data-id="latest" style="left:1100px;top:140px;width:340px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label code" data-id="sql" style="left:0px;top:350px;width:1440px">QUALIFY row_number() OVER (PARTITION BY customer_id ORDER BY lsn DESC) = 1</div><p class="annotation red" style="left:0px;top:410px;width:1440px">Skip it and DuckDB refuses: “MERGE INTO command cannot affect the same target row more than once”</p></div>
+  <div class="callout tip"><b>Latest per key:</b> the <code>row_number</code> dedupe from Day 1. <code>QUALIFY</code> is <code>WHERE</code> for window functions.</div>
+  <aside class="notes">Lab 2.3 task 2: the student writes the QUALIFY line. Step 1: DISTINCT ON (lsn) keeps one row per lsn: 6,346 to 6,158. Redeliveries are identical, so any copy may stay. Step 2: row_number over each customer, newest lsn first: 4,542 customers. A delete has no after image, so the key comes from before: coalesce(after.customer_id, before.customer_id). The message in red is DuckDB's real one when the source still has two rows for a key.</aside>
+</section>
+
+<section class="slide top">
+  <h2>MERGE: apply each change to our copy</h2>
+  <p class="lead small">Match each customer’s latest change to our copy (the 1 September snapshot) on customer_id.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-11-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-11-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-11-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em frag" data-frag="1" marker-end="url(#arr-D2cdc-11-em)" data-id="w-m0" d="M404 85 L1034 85"/><path class="wire em frag" data-frag="2" marker-end="url(#arr-D2cdc-11-em)" data-id="w-m1" d="M404 215 L1034 215"/><path class="wire danger frag" data-frag="3" marker-end="url(#arr-D2cdc-11-danger)" data-id="w-m2" d="M404 345 L1034 345"/></svg><div class="label hand muted" data-id="m-l" style="left:0px;top:0px;width:400px">LATEST CHANGE</div><div class="label rec chg frag" data-frag="1" data-id="latest" style="left:0px;top:50px;width:400px"><b>100898 · u · lsn 5007086</b><span>Jeddah · Al Hamra</span></div><div class="label rec chg frag" data-frag="2" data-id="m371" style="left:0px;top:180px;width:400px"><b>107371 · c · lsn 5107395</b><span>Khalid signs up · Riyadh · Al Malqa</span></div><div class="label rec chg frag" data-frag="3" data-id="m710" style="left:0px;top:310px;width:400px"><b>100710 · d · lsn 5051530</b><span>erased · after: null</span></div><div class="label hand muted" data-id="m-r" style="left:1040px;top:0px;width:400px">OUR COPY</div><div class="label reason chip frag" data-frag="1" data-id="br0" style="left:500px;top:52px;width:440px"><b>found → UPDATE</b><br>every column, from the after image</div><div class="label reason chip frag" data-frag="2" data-id="br1" style="left:500px;top:182px;width:440px"><b>not found → INSERT</b><br>a new row: Khalid, who signed up after the snapshot</div><div class="label reason chip frag" data-frag="3" data-id="br2" style="left:500px;top:312px;width:440px"><b>found, op = d → DELETE</b><br>the row goes</div><div class="label rec copy frag" data-frag="1" data-id="snap" style="left:1040px;top:50px;width:400px"><b>customer 100898</b><span>Jeddah · Al Hamra</span></div><div class="label rec copy frag" data-frag="2" data-id="c371" style="left:1040px;top:180px;width:400px"><b>customer 107371</b><span>Khalid · Riyadh · Al Malqa</span></div><div class="label rec copy gone frag" data-frag="3" data-id="c710" style="left:1040px;top:310px;width:400px"><b>customer 100710</b><span>Riyadh · Al Naseem</span></div></div>
+  <div class="callout tip"><b>MERGE</b> looks up each key in the target. Found: update or delete. Not found: insert. <b>Upsert</b> plus deletes, one statement.</div>
+  <aside class="notes">A build, one customer per click, one per outcome. Ask the room what should happen before each click. 100898 is found: every column is overwritten from the after image. Khalid, 107371, signed up on 26 September, after the snapshot, so he's not found: insert. Two days later comes order 5043883. Customer 100710 is found and their latest change is a delete: the row goes. An updated_at query would never have seen this delete.</aside>
+</section>
+
+<section class="slide top">
+  <h2>All of September in one statement</h2>
+  <p class="lead small">The same three branches, run on every customer’s latest change.</p>
+  <div class="board"><div class="label tbl mono" data-id="merge-t" style="left:0px;top:0px;width:1440px"><div class="t-title">MERGE INTO customers USING latest USING (customer_id)</div><div class="t-row h" style="grid-template-columns:1fr 260px"><span></span><span>customers</span></div><div class="t-row " style="grid-template-columns:1fr 260px"><span>WHEN MATCHED AND op = 'd' THEN DELETE</span><span>139</span></div><div class="t-row " style="grid-template-columns:1fr 260px"><span>WHEN MATCHED THEN UPDATE SET …</span><span>2,862</span></div><div class="t-row " style="grid-template-columns:1fr 260px"><span>WHEN NOT MATCHED AND op &lt;&gt; 'd' THEN INSERT …</span><span>1,521</span></div></div><div class="label check" data-id="m-sum" style="left:0px;top:240px;width:1440px"><b>6,060</b> in the snapshot − <b>139</b> + <b>1,521</b> = <b>7,442</b> ✓ the app’s count today</div><p class="annotation " style="left:0px;top:310px;width:1440px">20 customers signed up and were erased within September: not found, op = d, so nothing to do.</p><p class="annotation teal" style="left:0px;top:390px;width:1440px">Run it twice on the same changes: the second run changes nothing.</p></div>
+  <div class="callout tip"><b>MERGE</b> is standard: DuckDB, Spark, Iceberg, Snowflake and BigQuery all run it. Run twice, it changes nothing.</div>
+  <aside class="notes">Lab 2.3 task 3: the student writes the three WHEN lines. Of 4,542 latest changes, 139 delete a snapshot row, 2,862 update one, 1,521 insert a new customer, and 20 are deletes of customers created during September, which no branch matches. Branches are checked top to bottom, so the delete branch must come before the plain update.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Did we get it right? Compare with the app</h2>
+  <p class="lead small">Every column of every row, in both directions.</p>
+  <div class="board"><div class="stage-box " data-id="rc-src" style="left:0px;top:20px;width:380px"><h3>app.customers</h3><div class="data-row"><span>rows</span><span>7,442</span></div><span class="tag">the app database, 30 September</span></div><div class="label check" data-id="ck1" style="left:450px;top:30px;width:560px"><b>✓</b> rows: 7,442 = 7,442</div><div class="label check" data-id="ck2" style="left:450px;top:95px;width:560px"><b>✓</b> missing (app EXCEPT copy): 0</div><div class="label check" data-id="ck3" style="left:450px;top:160px;width:560px"><b>✓</b> extra (copy EXCEPT app): 0</div><div class="stage-box silver" data-id="rc-copy" style="left:1060px;top:20px;width:380px"><h3>Our copy</h3><div class="data-row"><span>rows</span><span>7,442</span></div><span class="tag">snapshot + MERGE</span></div><p class="annotation red" style="left:0px;top:300px;width:1100px">Order by arrival instead: missing 1, extra 1. It’s customer 100898.</p><p class="annotation teal" style="left:0px;top:370px;width:1100px">Equal counts aren’t enough: both orders give 7,442 rows.</p></div>
+  <div class="callout tip"><b>Reconcile:</b> compare the copy with its source, row by row. The one test that catches 100898.</div>
+  <aside class="notes">Lab 2.3 task 4, run and read. EXCEPT compares whole rows, so one wrong column in one row shows up as one missing and one extra. Equal counts alone would have passed: 7,442 rows either way. In production the same check runs on a schedule and alerts when it isn't zero.</aside>
+</section>
+
+<section class="slide top">
+  <h2>MERGE keeps only now</h2>
+  <p class="lead small">Marketing asks how much Dammam customers spent. Order 5019534 is customer 100898’s, from 27 August.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-13-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-13-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-13-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger" marker-end="url(#arr-D2cdc-13-danger)" data-id="w-o" d="M702 95 L996 95"/></svg><figure class="figure" data-id="f-fin" style="left:0px;top:30px;width:200px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Marketing</figcaption><p class="detail">“Spend by customer city?”</p></figure><div class="label rec order" data-id="o534" style="left:260px;top:60px;width:440px"><b>order 5019534</b><span>27 Aug · DMM-01, Dammam · delivered</span><i>98.44</i></div><div class="label code" data-id="j1" style="left:740px;top:40px;width:260px">JOIN ON customer_id</div><div class="label rec copy" data-id="snap" style="left:1000px;top:60px;width:440px"><b>our copy · 100898</b><span>Jeddah · Al Hamra</span></div><p class="annotation red" style="left:1000px;top:150px;width:440px">98.44 SAR from a Dammam customer, counted as Jeddah</p><div class="label off" data-id="tk-v1" style="left:260px;top:264px;width:540px">before 17:15</div><div class="label off" data-id="tk-v2" style="left:840px;top:264px;width:600px">before 18:49</div><div class="label rec src gone" data-id="v1" style="left:260px;top:290px;width:540px"><b>customer 100898</b><span>Dammam · Al Nuzha · icloud email</span></div><div class="label rec src gone" data-id="v2" style="left:840px;top:290px;width:600px"><b>customer 100898</b><span>Dammam · Al Nuzha · yahoo email</span></div><p class="annotation " style="left:260px;top:390px;width:1180px">MERGE overwrote these rows. The answer was in them.</p></div>
+  <div class="callout tip"><b>Questions about the past</b> need the versions MERGE overwrote.</div>
+  <aside class="notes">Order 5019534: delivered on 27 August from DMM-01, 98.44 SAR. Joined to the current-state copy, it counts toward Jeddah, because that's where the customer lives today. Sometimes that's the right question: where do our customers live now? For how much did Dammam customers spend, we need the city they lived in when they ordered. If someone asks why not use the store: the store answers where we sold, a different question.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Keep every version: SCD Type 2</h2>
+  <p class="lead small">Add a row for each change: a version is valid from its change until the next one.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2cdc-15-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2cdc-15-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2cdc-15-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em frag" data-frag="1" marker-end="url(#arr-D2cdc-15-em)" data-id="w-e1" d="M700 196 L700 146"/><path class="wire em frag" data-frag="2" marker-end="url(#arr-D2cdc-15-em)" data-id="w-e2" d="M1180 196 L1180 146"/></svg><div class="label off" data-id="vn0" style="left:0px;top:14px;width:440px">version 1</div><div class="label rec copy" data-id="v1" style="left:0px;top:40px;width:440px"><b>Dammam · Al Nuzha</b><span>from 2025-08-14 04:31<br>to 2026-09-02 17:15</span></div><div class="label off frag" data-frag="1" data-id="vn1" style="left:480px;top:14px;width:440px">version 2</div><div class="label rec copy frag" data-frag="1" data-id="v2" style="left:480px;top:40px;width:440px"><b>Dammam · Al Nuzha</b><span>from 2026-09-02 17:15<br>to 2026-09-02 18:49</span></div><div class="label off frag" data-frag="2" data-id="vn2" style="left:960px;top:14px;width:440px">version 3</div><div class="label rec copy frag" data-frag="2" data-id="v3" style="left:960px;top:40px;width:440px"><b>Jeddah · Al Hamra</b><span>from 2026-09-02 18:49<br>to null · current</span></div><div class="label rec chg  frag" data-frag="1" data-id="e670" style="left:480px;top:200px;width:440px"><b>lsn 5006670</b><span>17:15 · email changed</span></div><div class="label rec chg  frag" data-frag="2" data-id="e086" style="left:960px;top:200px;width:440px"><b>lsn 5007086</b><span>18:49 · Dammam → Jeddah</span></div><div class="label code frag" data-frag="3" data-id="sql" style="left:0px;top:330px;width:1440px">valid_to = lead(valid_from) OVER (PARTITION BY customer_id ORDER BY lsn)</div><p class="annotation teal frag" data-frag="3" style="left:0px;top:400px;width:1440px">Each version ends where the next begins: no gaps, no overlaps. Ordered by lsn, so arrival order can’t spoil it.</p></div>
+  <div class="callout tip"><b>SCD Type 2</b> (a slowly changing dimension): 12,059 versions of 7,601 customers. Our MERGE copy is Type 1.</div>
+  <aside class="notes">Lab 2.3 task 5. A build: each change closes the current version and opens a new one. lead() over lsn closes each version where the next begins, so arrival order can't spoil it. A delete closes the last version and starts nothing. The lab ends by joining order 5019534 to the version valid at its time, an as-of join: Jeddah now, Dammam when ordered. The 159 erased customers have closed versions that still hold personal data: Day 4 returns to that. Type 1 overwrites, Type 2 keeps history, and the choice can differ per column.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">A customer signed up and was erased, both during September. Which MERGE branch runs for them?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>None: not found and <code>op = 'd'</code>, so there's nothing to do</div>
+      <div class="opt" data-k="B"><code>WHEN MATCHED THEN UPDATE</code></div>
+      <div class="opt" data-k="C"><code>WHEN MATCHED AND op = 'd' THEN DELETE</code></div>
+      <div class="opt" data-k="D"><code>WHEN NOT MATCHED THEN INSERT</code>, then a delete</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> They aren't in the 1 September snapshot, and their latest change is the delete. Without the <code>op &lt;&gt; 'd'</code> guard, you'd insert a row with no data. There are 20 of them.</div>
+  </div>
+  <aside class="notes">Answer A. The 20 from the September table.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 2.3">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 2.3 · 25 min</div>
+      <h2>From a change feed to history</h2>
+      <p class="lead small">Replay September's changes on the 1 September snapshot, end exactly where the app is, and keep the history.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_3_cdc_merge_scd.ipynb" target="_blank" rel="noopener">labs/D2_3_cdc_merge_scd.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Read the feed; find duplicates and late events <span class="min">4 min</span></li>
+      <li>Keep the latest change per customer <span class="min">6 min</span></li>
+      <li>MERGE the changes into our copy <span class="min">6 min</span></li>
+      <li>Reconcile with the app (0 differences) <span class="min">4 min</span></li>
+      <li>Build the SCD2 history <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · As-of join: revenue by customer city at order time</li>
+    </ul>
+  </div>
+  <aside class="notes">Three exercises, each one to three lines: the QUALIFY, the WHEN branches, the lead expression. Suggest finding customer 100898 in the output of task 1. Task 4 runs the arrival-order version automatically, so everybody sees missing 1, extra 1. Typical problem: putting the plain UPDATE branch above the DELETE branch.</aside>
+</section>
+
+<section class="slide section" data-session="S4 · Bronze to silver with Polars">
+  <div class="kicker">Session 4</div>
+  <h1>Bronze to silver with Polars</h1>
+  <ul class="bullets outcomes"><li>Use Polars expressions: select, filter, with_columns, group_by</li><li>Parse three timestamp formats into UTC, remove duplicates, add Riyadh time</li><li>Write silver as Parquet and read it with another engine</li></ul>
+  <div class="sess-no">04</div>
+  <aside class="notes">The other messy source: the couriers' delivery events. Tools change here, from SQL to a Python DataFrame, but the idea is the same.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Silver is bronze made trustworthy</h2>
+  <p class="lead small">Bronze keeps the couriers' events as they arrived. Silver is the same facts, cleaned.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-7-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-7-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-7-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-7-em)" d="M170 100 L216 100"/><path class="wire em" marker-end="url(#arr-D2-7-em)" d="M682 110 L796 110"/><path class="wire " marker-end="url(#arr-D2-7-normal)" d="M1262 100 L1286 100"/></svg><figure class="figure" style="left:0px;top:10px;width:165px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>The riders</figcaption><p class="detail">phones send events</p></figure><div class="stage-box bronze" style="left:220px;top:0px;width:460px"><h3>Bronze</h3><div class="data-row"><span>rows</span><span>22,518</span></div><div class="data-row"><span>event_time</span><span>text, 3 formats</span></div><div class="data-row repeated"><span>ev-0000038</span><span>twice</span></div></div><div class="label tool-label center" style="left:650px;top:45px;width:180px"><strong>Polars</strong></div><div class="stage-box silver" style="left:800px;top:0px;width:460px"><h3>Silver</h3><div class="data-row"><span>rows</span><span>22,206</span></div><div class="data-row"><span>event_at_utc</span><span>one datetime type</span></div><div class="data-row"><span>event_id</span><span>unique</span></div></div><figure class="figure" style="left:1290px;top:10px;width:150px;margin:0"><div class="art operations" aria-hidden="true"></div><figcaption>Operations</figcaption><p class="detail">“How fast?”</p></figure><p class="annotation teal" style="left:220px;top:330px;width:1220px">Never clean in place. Bronze stays as sent, so a wrong rule can be fixed and silver rebuilt.</p></div>
+  <div class="callout tip"><b>Silver.</b> One row per thing, the right types, no duplicates. Nobody should have to clean it again.</div>
+  <aside class="notes">Yesterday's bronze, silver, gold in practice. Silver keeps the same facts as bronze: it doesn't apply business meaning yet; that's gold, Day 3. Today's silver table is delivery events; the stretch cleans customers' mobile numbers.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Polars: columns described by expressions</h2>
+  <p class="lead small">A Python DataFrame library. <code>pl.col("city")</code> is an <b>expression</b>: a recipe for a column, computed only when a method runs it.</p>
+  <div class="cols cols-2 mt-s">
+    <table class="t small">
+      <tr><th>Polars</th><th>Does</th><th>SQL you know</th></tr>
+      <tr><td><code>select</code></td><td>keep or compute columns</td><td><code>SELECT</code></td></tr>
+      <tr><td><code>filter</code></td><td>keep rows</td><td><code>WHERE</code></td></tr>
+      <tr><td><code>with_columns</code></td><td>add columns, keep the rest</td><td><code>SELECT *, … AS x</code></td></tr>
+      <tr><td><code>group_by().agg()</code></td><td>one row per group</td><td><code>GROUP BY</code></td></tr>
+    </table>
+    <pre class="code s" data-file="deliveries per city"><code class="language-python">(bronze
+  .filter(pl.col("event_type") == "delivered")
+  .group_by("city")
+  .agg(pl.len().alias("rows"),
+       pl.col("order_id").n_unique().alias("orders"))
+  .sort("city")
+  .collect())</code></pre>
+  </div>
+  <div class="callout note mt"><b>Same answer as DuckDB.</b> Riyadh: 2,681 rows, but only 2,642 orders. A delivered order should have one delivered event. Hold that thought.</div>
+  <aside class="notes">Lab 2.4 task 1. A DataFrame is a table of typed columns, like a table in DuckDB. Know pandas? Polars has no index and changes nothing in place. The lab checks this query against the same SQL, and they agree. Polars or SQL? One answer, two interfaces. Use whichever fits the code around it. The gap between rows and orders is the duplicate problem, solved shortly.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Lazy: Polars plans before it reads</h2>
+  <p class="lead small"><code>scan_ndjson</code> reads nothing yet. You stack steps on a plan, and <code>.collect()</code> runs them together.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-8-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-8-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-8-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-8-em)" d="M262 195 L296 195"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-8-em)" d="M562 195 L596 195"/><path class="wire em frag" data-frag="c" marker-end="url(#arr-D2-8-em)" d="M862 195 L896 195"/></svg><div class="label hand muted" style="left:0px;top:0px;width:800px">delivery_events.jsonl · 10 columns</div><div class="label cell x" style="left:0px;top:45px;width:136px">event_id</div><div class="label cell x" style="left:144px;top:45px;width:136px">order_id</div><div class="label cell x" style="left:288px;top:45px;width:136px">store_id</div><div class="label cell r" style="left:432px;top:45px;width:136px">city</div><div class="label cell x" style="left:576px;top:45px;width:136px">courier_id</div><div class="label cell r" style="left:720px;top:45px;width:136px">event_type</div><div class="label cell x" style="left:864px;top:45px;width:136px">event_time</div><div class="label cell x" style="left:1008px;top:45px;width:136px">lat</div><div class="label cell x" style="left:1152px;top:45px;width:136px">lon</div><div class="label cell x" style="left:1296px;top:45px;width:136px">ingest_time</div><div class="label rec chg" style="left:0px;top:160px;width:260px"><b>scan_ndjson</b><span>a plan, no data</span></div><div class="label rec chg frag" data-frag="a" style="left:300px;top:160px;width:260px"><b>filter</b><span>delivered only</span></div><div class="label rec chg frag" data-frag="b" style="left:600px;top:160px;width:260px"><b>group_by, agg</b><span>per city</span></div><div class="label rec copy frag" data-frag="c" style="left:900px;top:160px;width:260px"><b>collect</b><span>now it runs</span></div><div class="label code frag" data-frag="d" style="left:0px;top:300px;width:1440px">NDJson SCAN … PROJECT 2/10 COLUMNS<br>SELECTION: col("event_type") == "delivered"</div><p class="annotation teal frag" data-frag="d" style="left:0px;top:380px;width:1440px">From the real plan: it reads 2 of the 10 columns, and filters as it reads.</p></div>
+  <div class="callout tip"><b>LazyFrame.</b> A query plan, not data. Polars can skip what the whole query doesn't need, like DuckDB's optimizer.</div>
+  <aside class="notes">The lab prints this plan with .explain(). The columns lit up are what the scan reads. That's the same idea as Day 1's column store and Parquet skipping, applied to a JSON file. Eager mode (read_ndjson) also exists, and it's fine for small data.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Three formats, one type</h2>
+  <p class="lead small"><code>event_time</code> is text, and phones send it three ways. Real rows.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-9-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-9-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-9-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-9-em)" d="M692 40 L856 40"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-9-em)" d="M692 165 L856 165"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D2-9-em)" d="M692 290 L856 290"/></svg><figure class="figure" style="left:0px;top:20px;width:170px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>The riders</figcaption><p class="detail">one time, three shapes</p></figure><div class="label rec chg" style="left:220px;top:5px;width:470px"><b>2026-09-24T05:14:52.016+03:00</b><span>18,031 events · ISO, with an offset</span></div><div class="label rec chg frag" data-frag="a" style="left:220px;top:130px;width:470px"><b>2026-09-24T03:18:54.099Z</b><span>3,372 events · ISO, in UTC</span></div><div class="label rec chg frag" data-frag="b" style="left:220px;top:255px;width:470px"><b>1790220454190</b><span>1,115 events · milliseconds since 1970</span></div><div class="label rec copy" style="left:860px;top:5px;width:580px"><b>2026-09-24 02:14:52.016 UTC</b><span>datetime, time zone UTC</span></div><div class="label rec copy frag" data-frag="a" style="left:860px;top:130px;width:580px"><b>2026-09-24 03:18:54.099 UTC</b><span>datetime, time zone UTC</span></div><div class="label rec copy frag" data-frag="b" style="left:860px;top:255px;width:580px"><b>2026-09-24 03:27:34.190 UTC</b><span>datetime, time zone UTC</span></div><div class="label code frag" data-frag="c" style="left:220px;top:380px;width:1220px">pl.when(is_epoch).then(from_epoch).otherwise(from_iso)</div></div>
+  <div class="callout tip"><b>UTC.</b> The world's reference clock. Store one moment one way, and convert only for people. 0 values failed.</div>
+  <aside class="notes">Lab 2.4 task 2. The student writes the one line in the code label; the three recipes are given. +03:00 and Z can be the same moment written differently. Check the output: 0 nulls, one type. When a parse goes wrong, Polars gives null with strict=False, so always count the nulls after parsing.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A phone retries, and an event lands twice</h2>
+  <p class="lead small">The same event_id, ingested twice. Real rows: order 5040074, Riyadh, 24 September.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-10-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-10-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-10-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger" marker-end="url(#arr-D2-10-danger)" d="M672 75 L755 75"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-10-em)" d="M672 180 L755 180"/></svg><figure class="figure" style="left:0px;top:10px;width:180px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>The rider</figcaption><p class="detail">CR-RIY-078: the phone retried</p></figure><div class="label rec dup" style="left:230px;top:40px;width:440px"><b>ev-0000038 · delivered</b><span>ingested second, 11:54:37</span></div><div class="label rec copy" style="left:230px;top:145px;width:440px"><b>ev-0000038 · delivered</b><span>ingested first, 11:54:25</span></div><div class="label ptr red" style="left:765px;top:58px;width:40px">✕</div><div class="label rec copy frag" data-frag="a" style="left:760px;top:145px;width:680px"><b>silver: one row</b><span>the first-ingested copy</span></div><div class="label code frag" data-frag="b" style="left:230px;top:270px;width:1210px">.sort("ingested_at_utc").unique(subset="event_id", keep="first", maintain_order=True)</div><div class="label check frag" data-frag="b" style="left:230px;top:340px;width:1210px"><b>22,518</b> → <b>22,206</b> rows: <b>312</b> duplicates gone. Riyadh's delivered rows: 2,681 → <b>2,642</b>, one per order.</div></div>
+  <div class="callout tip"><b>Deduplicate on the key,</b> and decide which copy survives. Here the first one to reach us.</div>
+  <aside class="notes">Lab 2.4 task 3. That answers the question from the Polars slide: duplicates inflated the count. Same pattern as latest-per-key in Session 3, and as row_number on Day 1: partition by the key, pick one. In Polars, sort then unique. Keep the rule in one place, and name it.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Same moment, different date</h2>
+  <p class="lead small">Khalid's order 5043883: the rider delivered it in the small hours of 28 September.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-11-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-11-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-11-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-11-em)" d="M205 110 L290 110"/><path class="wire em" marker-end="url(#arr-D2-11-em)" d="M1150 110 L1235 110"/></svg><figure class="figure" style="left:0px;top:10px;width:195px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>The rider</figcaption><p class="detail">delivers</p></figure><div class="label rec src" style="left:300px;top:45px;width:840px"><b>2026-09-27 22:54:55.084 UTC</b><span>event_at_utc: for joins and arithmetic</span></div><div class="label rec copy frag" data-frag="a" style="left:300px;top:150px;width:840px"><b>2026-09-28 01:54:55.084 +03</b><span>event_at_riyadh: what operations reads</span></div><figure class="figure" style="left:1245px;top:10px;width:195px;margin:0"><div class="art customer" aria-hidden="true"></div><figcaption>Khalid</figcaption><p class="detail">gets his order</p></figure><div class="label code frag" data-frag="a" style="left:300px;top:265px;width:840px">pl.col("event_at_utc").dt.convert_time_zone("Asia/Riyadh")</div><p class="annotation red frag" data-frag="b" style="left:0px;top:350px;width:1440px">Which date does a daily report use? Decide on purpose, and write it down.</p></div>
+  <div class="callout tip"><b>Keep both columns.</b> UTC for computing, Riyadh for people and for the daily report.</div>
+  <aside class="notes">Real events for order 5043883 from the lab. Same moment, but a report grouped by UTC date puts this delivery on the 27th. Riyadh has no daylight saving time, so the offset is always +03, but other systems and tools still work in UTC. Common failure: replace_time_zone when you mean convert_time_zone: replace changes the moment.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Events don't all arrive on time</h2>
+  <p class="lead small"><code>ingest_time</code> minus <code>event_time</code>, over 22,206 clean events. A courier's phone goes offline, and the event waits.</p>
+  <div class="art-row mt">
+    <div class="art courier" style="width:190px"></div>
+    <div class="cols cols-3" style="flex:1">
+      <div class="card c-teal"><div class="stat"><div class="big">98.5%</div><div class="lbl">reach us within 10 seconds</div></div></div>
+      <div class="card c-amber"><div class="stat"><div class="big">324</div><div class="lbl">later than 5 minutes</div></div></div>
+      <div class="card c-coral"><div class="stat"><div class="big">2,991 s</div><div class="lbl">the latest: about 50 minutes</div></div></div>
+    </div>
+  </div>
+  <div class="callout warn mt"><b>What goes wrong.</b> A report on "yesterday" can change tomorrow, because yesterday's events are still arriving. Day 4's streaming session tackles this head on.</div>
+  <aside class="notes">Lab 2.4 task 4, run and read: 98.5% within 10 seconds, 324 later than five minutes, a maximum of 2,991 seconds. ingest_delay_s is one with_columns: the difference of two datetimes, in seconds. Measure it now: this number decides how late a daily job should run.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Write silver as Parquet, read it anywhere</h2>
+  <p class="lead small">Written by Polars, read by DuckDB. Parquet is the handshake between engines.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2-12-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2-12-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2-12-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2-12-em)" d="M378 100 L460 100"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-D2-12-em)" d="M843 100 L862 100"/></svg><div class="label rec src" style="left:0px;top:60px;width:345px"><b>bronze</b><span>delivery_events.jsonl</span><i>6.03 MB</i></div><div class="label tool-label center" style="left:330px;top:0px;width:150px"><strong>Polars</strong></div><div class="label rec copy" style="left:465px;top:60px;width:345px"><b>silver</b><span>delivery_events.parquet</span><i>0.42 MB</i></div><figure class="figure frag" data-frag="a" style="left:865px;top:0px;width:130px;margin:0"><div class="art warehouse" aria-hidden="true"></div><figcaption>DuckDB</figcaption></figure><div class="label tbl sums frag" data-frag="a" style="left:1020px;top:0px;width:386px"><div class="t-title">Delivered, read back</div><div class="t-row h" style="grid-template-columns:1fr 90px 90px"><span>city</span><span>rows</span><span>orders</span></div><div class="t-row " style="grid-template-columns:1fr 90px 90px"><span>Dammam</span><span>929</span><span>929</span></div><div class="t-row " style="grid-template-columns:1fr 90px 90px"><span>Jeddah</span><span>1,686</span><span>1,686</span></div><div class="t-row " style="grid-template-columns:1fr 90px 90px"><span>Riyadh</span><span>2,642</span><span>2,642</span></div></div><div class="label code frag" data-frag="b" style="left:0px;top:280px;width:1090px">silver.write_parquet(path, compression="zstd")</div><p class="annotation teal frag" data-frag="b" style="left:0px;top:350px;width:1440px">7% of the size, with fewer columns. And rows now equals orders in every city.</p></div>
+  <div class="callout tip"><b>Silver is done:</b> trustworthy, typed, compact, and open to any engine. Tomorrow you model it.</div>
+  <aside class="notes">Lab 2.4 task 5. 6.03 MB of JSON lines becomes 0.42 MB of Parquet: part of that is Parquet from Day 1, part is dropping lat, lon and the raw text, so don't quote the ratio as Parquet alone. The check reads it back with DuckDB and finds the rows-versus-orders gap closed.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">You find out next month that one of your cleaning rules was wrong. What saves you?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Polars keeps the old values in memory</div>
+      <div class="opt" data-k="B">Parquet files can be edited in place</div>
+      <div class="opt" data-k="C" data-ok>Bronze still holds the raw text: fix the rule and rebuild silver</div>
+      <div class="opt" data-k="D">The duplicates, which give you a second copy</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Never clean in place. Bronze is the source you can always rebuild from, which is why it stays as it was sent.</div>
+  </div>
+  <aside class="notes">Answer C. That's the reason for having bronze at all.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 2.4">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 2.4 · 25 min</div>
+      <h2>Bronze to silver with Polars</h2>
+      <p class="lead small">Turn the couriers' raw events into a clean silver table: one type, no duplicates, Riyadh time, Parquet.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_4_bronze_to_silver.ipynb" target="_blank" rel="noopener">labs/D2_4_bronze_to_silver.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Meet Polars: expressions on the bronze events <span class="min">5 min</span></li>
+      <li>Parse three timestamp formats into UTC <span class="min">6 min</span></li>
+      <li>Deduplicate and convert to Riyadh time <span class="min">6 min</span></li>
+      <li>Measure how late events arrive <span class="min">3 min</span></li>
+      <li>Write silver Parquet and read it back <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Clean the customers' mobile numbers to one format</li>
+    </ul>
+  </div>
+  <aside class="notes">Three short exercises: the when/then line, the sort-unique-convert chain, the write. Each has a safety net. If someone's Polars is unfamiliar, let them read the reference in the check cell and move on. Typical problem: a plain string inside then() means a column name, not text; use pl.lit() (the stretch needs it).</aside>
+</section>
+
+<section class="slide" data-label="Wrap-up">
+  <div class="kicker">Day 2 wrap-up</div>
+  <h2>What you built today</h2>
+  <div class="flow">
+    <div class="step c-teal"><b>Lab 2.1</b>a loader by hand</div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>Lab 2.2</b>the same with dlt</div><div class="arrow">→</div>
+    <div class="step c-coral"><b>Lab 2.3</b>a current copy and its history</div><div class="arrow">→</div>
+    <div class="step c-purple"><b>Lab 2.4</b>silver Parquet</div>
+  </div>
+  <div class="cols cols-3 mt">
+    <div class="card c-teal"><h4>Make loads idempotent</h4><p class="small mb0">Overlap a little and upsert. Retries then stop being scary: 29,526 rows stay 29,526.</p></div>
+    <div class="card c-coral"><h4>Trust the log, not the arrival</h4><p class="small mb0">Order changes by lsn, and reconcile with the source. One customer in 7,442 proves why.</p></div>
+    <div class="card c-purple"><h4>Never clean in place</h4><p class="small mb0">Bronze stays as sent. Silver is rebuilt from it, so a wrong rule costs you a re-run.</p></div>
+  </div>
+  <aside class="notes">Ask: which of today's failures gave no error at all? The doubled revenue, the dropped column, the variant column, and customer 100898 in Dammam. That's tomorrow's motivation for tests.</aside>
+</section>
+
+<section class="slide" data-label="Capstone">
+  <div class="kicker">Capstone</div>
+  <h2>Form your capstone team by the end of today</h2>
+  <div class="art-row mt">
+    <div class="art stakeholders" style="width:240px"></div>
+    <ul class="bullets">
+      <li><b>Today:</b> agree your team and give your instructor the names</li>
+      <li><b>Day 4, Session 4:</b> capstone kickoff</li>
+      <li><b>Day 5:</b> each team demos a working data platform on Qafila's data, then answers technical questions</li>
+      <li>Today's four labs are the ingest and clean stages of that platform</li>
+    </ul>
+  </div>
+  <aside class="notes">Do this before people leave the room. Teams matter for tomorrow, because the capstone work starts building on the modeling and testing sessions. Take the names now.</aside>
+</section>
+
+<section class="slide dark" data-label="Tomorrow">
+  <div class="kicker">Tomorrow</div>
+  <h2>Day 3: Model and test</h2>
+  <div class="cols cols-4 mt">
+    <div class="card c-teal"><h4>Session 1</h4><p class="small mb0">Dimensional modeling: grain, facts and dimensions, a star</p></div>
+    <div class="card c-cyan"><h4>Session 2</h4><p class="small mb0">dbt: staging to marts, lineage, one build command</p></div>
+    <div class="card c-coral"><h4>Session 3</h4><p class="small mb0">Data quality: tests, warn vs. error, quarantine</p></div>
+    <div class="card c-purple"><h4>Session 4</h4><p class="small mb0">Orchestration with Dagster: assets, schedules, checks</p></div>
+  </div>
+  <aside class="notes">Unfinished labs aren't needed for tomorrow: every lab starts from the raw data or a warehouse it builds itself. Remind them one last time: capstone teams, today.</aside>
+</section>
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

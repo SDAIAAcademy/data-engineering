@@ -1,19 +1,21 @@
 # %% [markdown]
-# # Lab 2.1 · Bronze → silver with DuckDB and Polars
+# # Lab 2.4 · Bronze to silver with Polars
 #
-# Day 2 · Session 1 (Processing engines: DuckDB & Polars) · 24 min, after `tools/polars`. What you'll build:
-# - the same transformation in **SQL (DuckDB)** and in **DataFrames (Polars)**, and a feel for when to use which;
-# - a silver `delivery_events` table: three timestamp formats parsed, duplicates removed, Riyadh time, ingest delay;
-# - a silver `customers` table: E.164 mobiles, normalized Arabic names, duplicate accounts linked to one person;
-# - a look at both engines' **query plans**, and silver Parquet files on disk.
+# Day 2 · Session 4 · 25 min
+#
+# Bronze keeps the couriers' delivery events as they arrived: three timestamp formats, and repeated rows. Silver is the
+# same data made trustworthy. You'll clean it with **Polars**, a fast DataFrame library for Python. What you'll do:
+# - use Polars expressions, and check the answer against SQL;
+# - parse three timestamp formats into one UTC type, remove duplicates, add Riyadh time;
+# - write silver as Parquet, and read it back with another engine.
 #
 # **Tasks**
-# - [ ] 1 · Same question, two engines (4')
-# - [ ] 2 · Parse three timestamp formats into UTC with Polars (6')
-# - [ ] 3 · Deduplicate, convert to Riyadh time, measure lateness (5')
-# - [ ] 4 · Clean customers in SQL: mobiles, Arabic names, duplicate accounts (5')
-# - [ ] 5 · Read the plans; write silver Parquet (4')
-# - [ ] ✱ Stretch · Out of core: run a big join with a 100 MB memory limit
+# - [ ] 1 · Meet Polars: expressions on the bronze events (5')
+# - [ ] 2 · Parse three timestamp formats into UTC (6')
+# - [ ] 3 · Deduplicate and convert to Riyadh time (6')
+# - [ ] 4 · Measure how late events arrive (3')
+# - [ ] 5 · Write silver Parquet and read it back (5')
+# - [ ] ✱ Stretch · Clean the customers' mobile numbers to one format
 
 # %%
 import os, sys, subprocess
@@ -36,232 +38,252 @@ U.ensure_data()
 print("data:", U.RAW, "| quick mode:", U.QUICK)
 
 # %%
+import sqlite3
+
 import duckdb
 import polars as pl
 
 pl.Config.set_tbl_rows(8)
 pl.Config.set_fmt_str_lengths(40)
-U.build_warehouse()                                   # bronze layer: raw.* tables (Day 1's end state)
-con = duckdb.connect(str(U.WAREHOUSE_DB), read_only=True)
-con.sql("SET enable_progress_bar = false")
-OUT = U.lab_dir("D2_1", reset=True)
+OUT = U.lab_dir("D2_4_silver", reset=True)
 EVENTS = (U.RAW / "events" / "delivery_events.jsonl").as_posix()
-print(con.sql("SELECT table_name FROM information_schema.tables WHERE table_schema = 'raw' ORDER BY 1").fetchall())
 
 # %% [markdown]
-# ## 1 · Same question, two engines (4')
+# ## 1 · Meet Polars: expressions on the bronze events (5')
 #
-# *Delivered revenue by store, September only.* In DuckDB it's SQL over the warehouse tables; in Polars, one lazy chain
-# (`tools/polars` §10).
-
-# %%
-sql_result = con.sql("""
-    SELECT o.store_id, round(sum(i.quantity * i.unit_price - i.discount), 2) AS revenue
-    FROM raw.orders o JOIN raw.order_items i USING (order_id)
-    WHERE o.status = 'delivered' AND o.created_at >= '2026-09-01'
-    GROUP BY o.store_id ORDER BY o.store_id
-""").pl()
-
-orders = con.sql("SELECT * FROM raw.orders").pl().lazy()          # hand DuckDB results to Polars (zero-copy Arrow)
-items = con.sql("SELECT * FROM raw.order_items").pl().lazy()
-
-# %% [markdown]
-# ✏️ **Exercise** · Write the same query with Polars expressions: filter, join, aggregate, sort. Name the result `pl_result`
-# (a DataFrame with `store_id`, `revenue`).
-
-# %%
-# BEGIN SOLUTION
-pl_result = (
-    orders.filter((pl.col("status") == "delivered") & (pl.col("created_at") >= "2026-09-01"))
-          .join(items, on="order_id")
-          .group_by("store_id")
-          .agg((pl.col("quantity") * pl.col("unit_price") - pl.col("discount")).sum().round(2).alias("revenue"))
-          .sort("store_id")
-          .collect()
-)
-# END SOLUTION
-pl_result
-
-# %%
-U.check(pl_result.equals(sql_result), "Polars and DuckDB agree, to the halala")
-
-# %% [markdown]
-# 🔍 One answer, two interfaces over the same kind of engine. Which to pick when: `tools/polars` §12.
-#
-# ## 2 · Parse three timestamp formats into UTC with Polars (6')
-#
-# Bronze delivery events, straight from the JSON lines file. `event_time` comes in three shapes (Lab 1.1).
+# `scan_ndjson` doesn't read anything yet: it returns a **LazyFrame**, a plan. You stack steps on it, and `.collect()`
+# runs them all at once, so Polars can skip what you don't need.
 
 # %%
 bronze = pl.scan_ndjson(EVENTS)
-bronze.select("event_id", "event_type", "event_time", "ingest_time").head(4).collect()
+bronze.select("event_id", "order_id", "event_type", "event_time", "ingest_time").head(4).collect()
 
 # %% [markdown]
-# ✏️ **Exercise** · Add `event_at_utc` (a UTC `Datetime`): epoch milliseconds (13 digits) via `pl.from_epoch(..., time_unit="ms")`
-# made UTC-aware with `.dt.replace_time_zone("UTC")`; everything else (ISO with an offset or `Z`) via
-# `.str.to_datetime(time_zone="UTC")`, which converts any offset to UTC. Also parse `ingest_time` into `ingested_at_utc`.
+# `pl.col("city")` is an **expression**: a recipe for a column, computed only when a method runs it. Four methods run
+# them, and they cover most days of work:
+#
+# | Method | Does | SQL you know |
+# |---|---|---|
+# | `select` | keep or compute columns | `SELECT` |
+# | `filter` | keep rows | `WHERE` |
+# | `with_columns` | add or replace columns, keep the rest | `SELECT *, ... AS x` |
+# | `group_by(...).agg(...)` | one row per group | `GROUP BY` |
+#
+# One question, in both languages: how many deliveries per city?
+
+# %%
+in_polars = (
+    bronze.filter(pl.col("event_type") == "delivered")
+          .group_by("city")
+          .agg(pl.len().alias("rows"), pl.col("order_id").n_unique().alias("orders"))
+          .sort("city")
+          .collect()
+)
+in_sql = duckdb.sql(f"""
+    SELECT city, count(*) AS rows, count(DISTINCT order_id) AS orders
+    FROM read_json_auto('{EVENTS}')
+    WHERE event_type = 'delivered'
+    GROUP BY city ORDER BY city
+""").pl()
+U.check(in_polars.equals(in_sql.cast({"rows": pl.UInt32, "orders": pl.UInt32})), "Polars and DuckDB agree")
+in_polars
+
+# %% [markdown]
+# 🔍 Same answer, two interfaces. Compare `rows` and `orders`: a delivered order should have one delivered event. Why are
+# they different? The next two tasks answer that.
+#
+# And look at the plan Polars made for this query. Which columns does it actually read from the file?
+
+# %%
+print(bronze.filter(pl.col("event_type") == "delivered").group_by("city").agg(pl.len()).explain())
+
+# %% [markdown]
+# ## 2 · Parse three timestamp formats into UTC (6')
+#
+# `event_time` is text, and the couriers' phones send it three ways. Count them by shape:
+
+# %%
+shapes = bronze.with_columns(
+    pl.col("event_time").str.replace_all(r"\d", "9").alias("shape")
+).group_by("shape").agg(pl.len().alias("events"), pl.col("event_time").first().alias("example")).sort("events", descending=True).collect()
+shapes
+
+# %% [markdown]
+# A **time zone** matters here: `...T01:54:55+03:00` and `...T22:54:55Z` are the same moment. **UTC** (the `Z`) is the
+# world's reference clock: store one moment one way, and convert only for display.
+#
+# The three recipes are given below as expressions: `is_epoch` (13 digits, milliseconds since 1970), `from_epoch` and `from_iso`.
+#
+# ✏️ **Exercise** · Complete `utc_expression`: if `is_epoch`, use `from_epoch`, otherwise `from_iso`.
+#
+# Hint: `pl.when(condition).then(a).otherwise(b)`, one line.
 
 # %%
 et = pl.col("event_time")
-# BEGIN SOLUTION
+is_epoch = et.str.contains(r"^\d{13}$")
+from_epoch = pl.from_epoch(et.cast(pl.Int64, strict=False), time_unit="ms").dt.replace_time_zone("UTC")
+from_iso = et.str.to_datetime(time_zone="UTC", strict=False)      # converts any offset to UTC
+
+
+def utc_expression():
+    # BEGIN SOLUTION
+    return pl.when(is_epoch).then(from_epoch).otherwise(from_iso)
+    # END SOLUTION
+
+# %%
+try:
+    event_at_utc = utc_expression()
+except NotImplementedError:
+    print("✏️ Not done yet: using the reference expression so the rest of the lab runs.")
+    event_at_utc = pl.when(is_epoch).then(from_epoch).otherwise(from_iso)
 parsed = bronze.with_columns(
-    pl.when(et.str.contains(r"^\d{13}$"))
-      .then(pl.from_epoch(et.cast(pl.Int64, strict=False), time_unit="ms").dt.replace_time_zone("UTC"))
-      .otherwise(et.str.to_datetime(time_zone="UTC", strict=False))
-      .alias("event_at_utc"),
+    event_at_utc.alias("event_at_utc"),
     pl.col("ingest_time").str.to_datetime(time_zone="UTC").alias("ingested_at_utc"),
 )
-# END SOLUTION
 sample = parsed.select("event_time", "event_at_utc").collect()
-sample.group_by(et.str.slice(23).alias("suffix")).agg(pl.len(), pl.col("event_at_utc").first(), et.first())
-
-# %%
+print("nulls:", sample["event_at_utc"].null_count(), "(expected: 0) | type:", sample["event_at_utc"].dtype)
 U.check(sample["event_at_utc"].null_count() == 0, "every event_time parsed")
-U.check(str(sample["event_at_utc"].dtype) == "Datetime(time_unit='us', time_zone='UTC')", "one type: UTC datetime")
+sample.with_columns(et.str.replace_all(r"\d", "9").alias("shape")).group_by("shape").agg(et.first(), pl.col("event_at_utc").first())
 
 # %% [markdown]
-# ## 3 · Deduplicate, convert to Riyadh time, measure lateness (5')
+# ## 3 · Deduplicate and convert to Riyadh time (6')
 #
-# ✏️ **Exercise** · Build the lazy frame `silver_events` from `parsed`:
-# 1. keep the **first-ingested** copy of each `event_id` (sort by `ingested_at_utc`, then `unique(..., keep="first")`);
-# 2. add `event_at_riyadh` (`.dt.convert_time_zone("Asia/Riyadh")`);
-# 3. add `ingest_delay_s`: seconds between event time and ingest time (`.dt.total_seconds()`);
-# 4. keep the columns `event_id, order_id, store_id, city, courier_id, event_type, event_at_utc, event_at_riyadh, ingested_at_utc, ingest_delay_s`.
+# Phones retry when the network drops, so some events arrived twice, with the same `event_id`. Keep the **first-ingested**
+# copy. Then add the time Riyadh's operations team reads.
+#
+# ✏️ **Exercise** · Complete `clean`: sort by `ingested_at_utc`, keep the first row per `event_id`, and add `event_at_riyadh`.
+#
+# Hint: `.sort(...)`, `.unique(subset="event_id", keep="first", maintain_order=True)`,
+# `.with_columns(pl.col("event_at_utc").dt.convert_time_zone("Asia/Riyadh").alias("event_at_riyadh"))`.
 
 # %%
-# BEGIN SOLUTION
-silver_events = (
-    parsed.sort("ingested_at_utc")
-          .unique(subset="event_id", keep="first", maintain_order=True)
-          .with_columns(
-              pl.col("event_at_utc").dt.convert_time_zone("Asia/Riyadh").alias("event_at_riyadh"),
-              (pl.col("ingested_at_utc") - pl.col("event_at_utc")).dt.total_seconds().alias("ingest_delay_s"),
-          )
-          .select("event_id", "order_id", "store_id", "city", "courier_id", "event_type",
-                  "event_at_utc", "event_at_riyadh", "ingested_at_utc", "ingest_delay_s")
-)
-# END SOLUTION
-ev = silver_events.collect()
+def clean(frame):
+    # BEGIN SOLUTION
+    return (frame.sort("ingested_at_utc")
+                 .unique(subset="event_id", keep="first", maintain_order=True)
+                 .with_columns(pl.col("event_at_utc").dt.convert_time_zone("Asia/Riyadh").alias("event_at_riyadh")))
+    # END SOLUTION
+
+# %%
+try:
+    cleaned = clean(parsed)
+except NotImplementedError:
+    print("✏️ Not done yet: using the reference chain so the rest of the lab runs.")
+    cleaned = (parsed.sort("ingested_at_utc")
+                     .unique(subset="event_id", keep="first", maintain_order=True)
+                     .with_columns(pl.col("event_at_utc").dt.convert_time_zone("Asia/Riyadh").alias("event_at_riyadh")))
+ev = cleaned.collect()
 n_bronze = bronze.select(pl.len()).collect().item()
-print(f"bronze {n_bronze:,} rows -> silver {ev.height:,} rows ({n_bronze - ev.height} duplicates dropped)")
-U.check(ev["event_id"].is_unique().all(), "event_id is unique in silver")
+print(f"bronze {n_bronze:,} rows -> silver {ev.height:,} rows ({n_bronze - ev.height} duplicates dropped; expected: 22,518 -> 22,206)")
+U.check(ev["event_id"].n_unique() == ev.height == 22206, "event_id is unique in silver")
+ev.filter(pl.col("order_id") == 5043883).select("event_type", "event_at_utc", "event_at_riyadh").sort("event_at_utc")
 
 # %% [markdown]
-# How late do events arrive? Most within seconds; a few minutes or more when a courier's phone was offline.
-# Those late events will matter a lot in tomorrow's streaming labs.
+# 🔍 Khalid's order 5043883: the rider delivered it at 01:54 on 28 September in Riyadh, which is 22:54 on the **27th** in
+# UTC. Which date would a daily report use? Decide on purpose. We keep both columns, and bronze keeps the original text.
+#
+# ## 4 · Measure how late events arrive (3')
+#
+# `ingest_time` is when the event reached us. Run this and read it: most arrive within seconds, and a few much later,
+# when a courier's phone was offline. Nothing to write.
 
 # %%
+ev = ev.with_columns((pl.col("ingested_at_utc") - pl.col("event_at_utc")).dt.total_seconds().alias("ingest_delay_s"))
 ev.select(
-    (pl.col("ingest_delay_s") <= 10).mean().alias("share_within_10s"),
+    (pl.col("ingest_delay_s") <= 10).mean().round(3).alias("share_within_10s"),
     (pl.col("ingest_delay_s") > 300).sum().alias("later_than_5min"),
     pl.col("ingest_delay_s").max().alias("max_delay_s"),
 )
 
 # %% [markdown]
-# ## 4 · Clean customers in SQL: mobiles, Arabic names, duplicate accounts (5')
+# 🔍 Those late arrivals are why a report on "yesterday" can change tomorrow. Streaming on Day 4 deals with them head on.
 #
-# Back to SQL. Three cleaning rules for `raw.customers`:
-# - **mobile → E.164**: strip everything but digits; if what's left matches `(966|0)?5XXXXXXXX`, output `+966` + the last 9
-#   digits, else `NULL`;
-# - **Arabic name normalization** for matching: remove tatweel `ـ` (U+0640) and diacritics (U+064B–U+0652), and unify
-#   `أ إ آ` to `ا` (we keep the original name too: normalization is for matching, not for display);
-# - **person_id**: the smallest `customer_id` sharing the same `national_id`, so duplicate accounts roll up to one person.
+# ## 5 · Write silver Parquet and read it back (5')
 #
-# ✏️ **Exercise** · Write the `SELECT` that produces `silver_customers` with columns `customer_id, person_id, full_name,
-# name_normalized, email (lower-cased, trimmed), mobile_e164, city, district, created_at (TIMESTAMP), is_deleted (BOOLEAN)`.
-
-# %%
-# BEGIN SOLUTION
-silver_customers = con.sql(r"""
-    SELECT customer_id,
-           min(customer_id) OVER (PARTITION BY national_id)                         AS person_id,
-           full_name,
-           translate(regexp_replace(full_name, '[\x{0640}\x{064B}-\x{0652}]', '', 'g'), 'أإآ', 'ااا') AS name_normalized,
-           lower(trim(email))                                                        AS email,
-           CASE WHEN regexp_full_match(regexp_replace(mobile, '[^0-9]', '', 'g'), '(966|0)?5\d{8}')
-                THEN '+966' || right(regexp_replace(mobile, '[^0-9]', '', 'g'), 9) END AS mobile_e164,
-           city, district,
-           created_at::TIMESTAMP                                                     AS created_at,
-           is_deleted = 1                                                            AS is_deleted
-    FROM raw.customers
-""").pl()
-# END SOLUTION
-silver_customers.filter(pl.col("customer_id") != pl.col("person_id")).head(3)
-
-# %%
-U.check(silver_customers["mobile_e164"].null_count() <= 5, f"{silver_customers['mobile_e164'].null_count()} mobiles unrecognisable")
-U.check(silver_customers["mobile_e164"].drop_nulls().str.contains(r"^\+9665\d{8}$").all(), "all mobiles in E.164")
-dups = silver_customers.filter(pl.col("customer_id") != pl.col("person_id")).height
-U.check(dups > 40, f"{dups} duplicate accounts linked to a person")
-
-# %% [markdown]
-# Unrecognisable mobiles would not be thrown away: they'd stay `NULL` in the clean column, with the raw value still in
-# bronze. Here the rule caught everything, including the three odd values Lab 1.1 flagged as "other":
-
-# %%
-con.sql(r"""SELECT mobile AS raw_mobile, '+966' || right(regexp_replace(mobile, '[^0-9]', '', 'g'), 9) AS mobile_e164
-            FROM raw.customers
-            WHERE NOT regexp_full_match(mobile, '\+9665\d{8}|05\d{8}|9665\d{8}|\+966 5\d \d{3} \d{4}')""").df()
-
-# %% [markdown]
-# 🔍 Normalizing to one format (E.164) is what makes joins with other systems (SMS provider, CRM) possible. Matching on
-# digits only is more robust than enumerating every format a sign-up form ever produced.
+# Silver has clean names and only the columns people need.
 #
-# ## 5 · Read the plans; write silver Parquet (4')
+# ✏️ **Exercise** · Complete `write_silver`: write `silver` to `path` as Parquet with `zstd` compression.
 #
-# Both engines optimize before executing. Polars prints its optimized logical plan; DuckDB prints a physical plan tree.
+# Hint: `frame.write_parquet(path, compression="zstd")`, one line.
 
 # %%
-print(silver_events.filter(pl.col("event_type") == "delivered").select("order_id", "event_at_utc").explain())
-
-# %%
-print(con.sql("EXPLAIN SELECT store_id, count(*) FROM raw.orders WHERE status = 'delivered' GROUP BY ALL").fetchall()[0][1])
-
-# %% [markdown]
-# 🔍 In the Polars plan, look for `PROJECT 5/10 COLUMNS` in the scan: the optimizer pushed the column selection all the way
-# into the JSON reader. The filter on `event_type`, though, stays **above** the `UNIQUE`: removing rows before
-# deduplication could change which copy is kept, so the optimizer is not allowed to push it down. Optimizers are clever,
-# not magic.
-#
-# ✏️ **Exercise** · Write both silver tables as ZSTD Parquet into `OUT/silver/`: `delivery_events.parquet` (from the lazy
-# frame, with `sink_parquet`, which streams without collecting first) and `customers.parquet`.
-
-# %%
+silver = ev.select("event_id", "order_id", "store_id", "city", "courier_id", "event_type",
+                   "event_at_utc", "event_at_riyadh", "ingested_at_utc", "ingest_delay_s")
 (OUT / "silver").mkdir(exist_ok=True)
-# BEGIN SOLUTION
-silver_events.sink_parquet(OUT / "silver" / "delivery_events.parquet", compression="zstd")
-silver_customers.write_parquet(OUT / "silver" / "customers.parquet", compression="zstd")
-# END SOLUTION
-for f in sorted((OUT / "silver").glob("*.parquet")):
-    print(f"{f.name:28s} {U.size_mb(f):5.2f} MB  {pl.scan_parquet(f).select(pl.len()).collect().item():,} rows")
+SILVER = OUT / "silver" / "delivery_events.parquet"
+
+
+def write_silver(frame, path):
+    # BEGIN SOLUTION
+    frame.write_parquet(path, compression="zstd")
+    # END SOLUTION
 
 # %%
-check = duckdb.sql(f"SELECT count(*), count(DISTINCT event_id) FROM '{(OUT / 'silver' / 'delivery_events.parquet').as_posix()}'").fetchall()[0]
-U.check(check[0] == check[1] == ev.height, "silver events readable by another engine, still unique")
+try:
+    write_silver(silver, SILVER)
+except NotImplementedError:
+    print("✏️ Not done yet: using the reference write so the rest of the lab runs.")
+    silver.write_parquet(SILVER, compression="zstd")
+bronze_mb, silver_mb = U.size_mb(EVENTS), U.size_mb(SILVER)
+print(f"bronze file {bronze_mb:.2f} MB | silver file {silver_mb:.2f} MB, {silver_mb / bronze_mb:.0%} of the size")
+rows, ids = duckdb.sql(f"SELECT count(*), count(DISTINCT event_id) FROM '{SILVER.as_posix()}'").fetchall()[0]
+U.check(rows == ids == ev.height, "silver is readable by another engine, and still unique")
+duckdb.sql(f"""
+    SELECT city, count(*) AS deliveries, count(DISTINCT order_id) AS orders
+    FROM '{SILVER.as_posix()}' WHERE event_type = 'delivered' GROUP BY city ORDER BY city
+""").df()
 
 # %% [markdown]
-# ## ✱ Stretch · Out of core: run a big join with a 100 MB memory limit
+# 🔍 Now `deliveries` equals `orders`: the question from Task 1 is answered. The duplicates were inflating the count.
+# Written by Polars, read by DuckDB: Parquet is the handshake between engines.
 #
-# DuckDB processes data larger than memory by spilling intermediate results to disk. Cap it at 100 MB and run a
-# join + aggregation over a 20× replicated order-lines table. Compare the timing with no limit.
+# ## ✱ Stretch · Clean the customers' mobile numbers to one format
+#
+# The app holds mobiles in several shapes: `0596390578`, `966596390578`, `+966 59 639 0578`. Complete `mobile_e164`: an
+# expression that keeps only the digits, and if they match `(966|0)?5` + 8 digits, gives `+966` + the last 9 digits (the
+# international E.164 format), otherwise `null`.
 
 # %%
-# BEGIN SOLUTION
-big = duckdb.connect()
-big.sql(f"ATTACH '{U.WAREHOUSE_DB.as_posix()}' AS wh (READ_ONLY)")
-big.sql(f"SET temp_directory = '{(OUT / 'spill').as_posix()}'")
-big.sql("""CREATE TABLE lines AS SELECT i.*, k FROM wh.raw.order_items i, range(20) r(k)""")
-QUERY = """SELECT o.store_id, l.k, sum(l.quantity * l.unit_price) AS revenue
-           FROM lines l JOIN wh.raw.orders o USING (order_id) GROUP BY ALL"""
-for limit in ["8GB", "100MB"]:
-    big.sql(f"SET memory_limit = '{limit}'")
-    print(f"memory_limit {limit:>6}: {U.best_of(lambda: big.sql(QUERY).fetchall(), n=1):.2f} s")
-# END SOLUTION
+app = sqlite3.connect(U.RAW / "qafila_oltp.sqlite")
+customers = pl.read_database("SELECT customer_id, mobile FROM customers", app)
+
+
+def mobile_e164():
+    # BEGIN SOLUTION
+    digits = pl.col("mobile").str.replace_all(r"[^0-9]", "")
+    return (pl.when(digits.str.contains(r"^(966|0)?5\d{8}$"))
+              .then(pl.lit("+966") + digits.str.slice(-9))
+              .otherwise(None))
+    # END SOLUTION
+
+# %%
+try:
+    clean_mobiles = customers.with_columns(mobile_e164().alias("mobile_e164"))
+    print("not recognised:", clean_mobiles["mobile_e164"].null_count(), "of", clean_mobiles.height)
+    U.check(clean_mobiles["mobile_e164"].drop_nulls().str.contains(r"^\+9665\d{8}$").all(), "all mobiles in E.164")
+    display(clean_mobiles.group_by(pl.col("mobile").str.replace_all(r"\d", "9").alias("shape")).agg(pl.len(), pl.col("mobile_e164").first()))
+except NotImplementedError:
+    print("✱ Stretch not attempted: that's fine.")
 
 # %% [markdown]
 # ## Checkpoint
 #
-# 1. Which of today's cleaning rules belong in silver, and which (if any) in gold? Why keep the raw value in bronze?
-# 2. Why did the filter on `event_type` stay above `UNIQUE` in the Polars plan? When is that a performance problem?
-# 3. Riyadh has no daylight saving time. Why still store UTC and convert, instead of storing local time?
-# 4. A teammate wants to rewrite the SQL cleaning of customers in pandas "because Python is easier to test". Your advice?
+# **1.** What does `scan_ndjson` do that `read_ndjson` doesn't?
+#
+# <details><summary>Answer</summary>It reads nothing yet. It returns a plan (a LazyFrame), and <code>.collect()</code> runs
+# it, so Polars can read only the columns and rows the whole query needs.</details>
+#
+# **2.** Riyadh has no daylight saving time. Why store UTC and convert, instead of just storing Riyadh time?
+#
+# <details><summary>Answer</summary>Other systems, cities and tools work in UTC, and one moment should have one stored value.
+# Convert at the edge, for people: and keep the local column when a report needs local dates.</details>
+#
+# **3.** A cleaning rule turns out to be wrong a month later. What saves you?
+#
+# <details><summary>Answer</summary>Bronze still has the raw text. Fix the rule and rebuild silver from bronze. That's why
+# you never clean in place.</details>
+#
+# ## Carry forward
+#
+# Bronze is clean into silver, and written as Parquet. Tomorrow you model it for the business, test it and put it on a
+# schedule. Want more? `tools/polars.ipynb`.
