@@ -6,30 +6,6 @@
 <title>Modern Data Engineering</title>
 <link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/page.css">
-<style>
-  /* this course's session list: one row per session with what it is taught from, its lab and the solution */
-  .wrap { max-width: 1040px; }
-  header .meta { display: block; font-size: 15px; color: rgba(255,255,255,.65); margin-top: 18px; }
-  .cols { display: grid; gap: 18px 32px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-  .day { border-inline-start: 6px solid var(--c, var(--navy)); border-radius: 12px; }
-  .day h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0; padding: 16px 20px 6px; font-size: 20px; }
-  .day h3 span { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--c, var(--navy)); }
-  .day h3 .btn { margin-inline-start: auto; padding: 6px 14px; border-radius: 8px; font-size: 14px; letter-spacing: 0; text-transform: none; }
-  .day ol { list-style: none; margin: 0; padding: 0 20px 6px; }
-  .day li { display: grid; grid-template-columns: 1fr 190px 80px 70px; gap: 4px 16px; align-items: baseline; margin: 0; padding: 11px 0; border-top: 1px solid var(--paper-2); font-size: 15px; }
-  .day li:first-child { border-top: 0; }
-  .day li small { display: block; color: var(--muted); font-size: 14px; }
-  .day p { margin: 0; padding: 4px 20px 16px; font-size: 15px; color: var(--muted); }
-  .alt { color: var(--muted); font-size: 13.5px; }
-  .alt a { color: inherit; }
-  .bar { grid-template-columns: 1fr 44px; }
-  .bar i { height: 8px; border-radius: 4px; }
-  dl { margin: 0; font-size: 15.5px; } dt { font-weight: 700; color: var(--navy); } dd { margin: 0 0 12px; }
-  @media (max-width: 720px) {
-    .day li { grid-template-columns: auto auto 1fr; }
-    .day li > div { grid-column: 1 / -1; }
-  }
-</style>
 </head>
 <body>
 <header>
@@ -37,122 +13,150 @@
     <div class="logo" id="logo"></div>
     <div class="kicker">AI Engineering Track · Bootcamp</div>
     <h1>Modern Data Engineering</h1>
-    <p>From raw sources to a governed, AI-ready lakehouse: ingest, model, test, scale, stream, orchestrate and govern data with the open tools data teams use today.</p>
-    <div class="meta">4 teaching days × 4 hours · 16 hands-on labs in Python and SQL · capstone day</div>
+    <p>From raw sources to a tested, governed lakehouse: the bridge from a CS degree to the work a data team does every day.</p>
+    <div class="meta">
+      <span class="track">AI Engineering Track</span>
+      <span>4 teaching days × 4h + capstone day</span>
+      <span>16 training hours</span>
+      <span>~50% concepts · ~50% hands-on Python and SQL</span>
+    </div>
   </div>
 </header>
 
 <main class="wrap">
-  <h2>Schedule</h2>
-  <p class="muted">The whole week follows one case: <b>Qafila</b>, a fictional grocery delivery app in Riyadh, Jeddah and Dammam, whose messy sources feed one platform that every lab extends. All data is synthetic, so the labs run offline.</p>
-  <p class="muted">Each session is taught from a 📓 tool notebook (<b>read</b> shows it with outputs) or a 🖥️ slide deck, then practised in a lab. Four sessions a day. In the slides, press <code>?</code> for keys.</p>
+  <h2>One case study, all week</h2>
+  <p><b>Qafila</b>, a fictional grocery delivery app in Riyadh, Jeddah and Dammam. Its messy sources feed one data platform, and every lab adds a piece of it. All data is synthetic and generated on your machine.</p>
+  <div class="grid">
+    <div class="card" style="--c:var(--teal)"><h3>Store</h3><p>The platform, DuckDB, window functions, Parquet</p></div>
+    <div class="card" style="--c:var(--cyan)"><h3>Ingest</h3><p>APIs by hand, dlt, change feeds, cleaning with Polars</p></div>
+    <div class="card" style="--c:var(--coral)"><h3>Model</h3><p>Star schemas, dbt, data tests, orchestration with Dagster</p></div>
+    <div class="card" style="--c:var(--purple)"><h3>Scale</h3><p>Iceberg, Spark, streaming, governance under PDPL</p></div>
+    <div class="card" style="--c:var(--amber)"><h3>Demonstrate</h3><p>Team capstones: live demo, decisions, technical Q&amp;A</p></div>
+  </div>
 
-  <!-- sessions:begin -->
-  <section class="day" style="--c:var(--navy)">
-    <h3><span>Before Day 1</span>On your own</h3>
-    <ol>
-      <li><div><b>Setup check</b><small>installs the packages, generates the data and tests every tool; run it once</small></div><span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_setup_check.ipynb">Notebook</a></span><span></span></li>
-      <li><div><b>SQL window functions (if new to them)</b><small>a self-paced walkthrough, about 60 minutes: ranking, LAG/LEAD, frames, QUALIFY; Lab 1.4 builds on them</small></div><span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_sql_windows.ipynb">Notebook</a></span><span></span></li>
-    </ol>
-  </section>
+  <h2>Schedule and materials</h2>
+  <p style="color:var(--muted)">Four sessions a day, each about 20–25 minutes of concepts and demos, then a 25-minute lab. In the slides press <code>F</code> for fullscreen, <code>←</code> <code>→</code> to navigate, <code>N</code> for speaker notes, <code>?</code> for help.</p>
 
-  <section class="day" style="--c:var(--teal)">
-    <h3><span>Day 1</span>Data Platforms, Storage &amp; Ingestion</h3>
-    <ol>
-      <li><div><b>Opening · Course introduction</b><small>the Qafila business first: one order step by step, what each step records, who needs what</small></div><span><span title="concept deck">🖥️</span> <a href="slides/00_intro.html">slides</a></span><span></span><span></span></li>
-      <li><div><b>Opening · Warehouse, lake, lakehouse</b><small>why each design exists, and one order's journey through the Qafila platform</small></div><span><span title="concept deck">🖥️</span> <a href="slides/00_story.html">slides</a></span><span></span><span></span></li>
-      <li><div><b>D1_1 · Storage for analytics 1 · rows and columns</b><small>OLTP vs. OLAP, row vs. column storage, compression; DuckDB, files in place, one writer</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D1_1_storage.html">slides 1–13</a> → <span title="tool walkthrough">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/duckdb.ipynb">duckdb</a> <span class="alt"><a href="labs/tools/html/duckdb.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_1_platform_tour.ipynb" title="D1_1_platform_tour.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D1_1_platform_tour.ipynb">Solution</a></span></li>
-      <li><div><b>D1_2 · Storage for analytics 2 · columns in a file</b><small>CSV vs. Parquet, row groups and statistics, sorting to skip, partitions, small files</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D1_1_storage.html#14">slides 14–26</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_2_files_parquet.ipynb" title="D1_2_files_parquet.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D1_2_files_parquet.ipynb">Solution</a></span></li>
-      <li><div><b>D1_3 · Batch ingestion</b><small>full vs. incremental, cursors, pagination, retries, schema evolution</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dlt.ipynb">dlt</a> <span class="alt"><a href="labs/tools/html/dlt.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_3_ingestion_dlt.ipynb" title="D1_3_ingestion_dlt.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D1_3_ingestion_dlt.ipynb">Solution</a></span></li>
-      <li><div><b>D1_4 · Change data capture &amp; load strategies</b><small>Debezium-style CDC, MERGE, deletes, SCD Type 2</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D1_4_cdc_scd.html">slides</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_cdc_merge_scd.ipynb" title="D1_4_cdc_merge_scd.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D1_4_cdc_merge_scd.ipynb">Solution</a></span></li>
-    </ol>
-  </section>
+<!-- sessions:begin -->
+  <div class="day">
+    <div class="day-head" style="--c:var(--teal)"><div><div class="t">Day 1</div><h3>Store &amp; Query</h3></div><a class="btn" href="slides/day1.html">Open slides →</a></div>
+    <div class="scroll"><table>
+      <tr><th>Session</th><th>Lab notebook (opens in Colab)</th></tr>
+      <tr><td><b>1 · The job and the platform</b>: OLTP vs. OLAP, warehouse, lake, lakehouse, ELT, bronze/silver/gold</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_1_platform_tour.ipynb">D1_1_platform_tour</a></td></tr>
+      <tr><td><b>2 · Analytical SQL with DuckDB</b>: rows vs. columns, querying files in place, profiling</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_2_duckdb_sql.ipynb">D1_2_duckdb_sql</a></td></tr>
+      <tr><td><b>3 · Window functions</b>: PARTITION BY, ROW_NUMBER and dedupe, LAG/LEAD, running totals</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_3_sql_windows.ipynb">D1_3_sql_windows</a></td></tr>
+      <tr><td><b>4 · Files for analytics</b>: CSV vs. Parquet, statistics, sorting to skip, partitions</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D1_4_files_parquet.ipynb">D1_4_files_parquet</a></td></tr>
+    </table></div>
+  </div>
 
-  <section class="day" style="--c:var(--cyan)">
-    <h3><span>Day 2</span>Transformation, Modeling &amp; Quality</h3>
-    <ol>
-      <li><div><b>D2_1 · Bronze to silver</b><small>expressions, joins, windows, lazy plans; the same question in DuckDB and Polars</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/polars.ipynb">polars</a> <span class="alt"><a href="labs/tools/html/polars.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_1_bronze_to_silver.ipynb" title="D2_1_bronze_to_silver.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D2_1_bronze_to_silver.ipynb">Solution</a></span></li>
-      <li><div><b>D2_2 · Dimensional modeling</b><small>grain, facts and dimensions, star schema, fan-out, surrogate keys</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D2_2_modeling.html">slides</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_2_dimensional_modeling.ipynb" title="D2_2_dimensional_modeling.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D2_2_dimensional_modeling.ipynb">Solution</a></span></li>
-      <li><div><b>D2_3 · dbt: transformation as software</b><small>sources, refs, layers, materializations, incremental models, macros, lineage</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dbt.ipynb">dbt</a> <span class="alt"><a href="labs/tools/html/dbt.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_3_dbt_project.ipynb" title="D2_3_dbt_project.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D2_3_dbt_project.ipynb">Solution</a></span></li>
-      <li><div><b>D2_4 · Testing &amp; data quality</b><small>dbt tests, warn vs. error, contracts, unit tests; Pandera schemas, quarantine</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dbt.ipynb">dbt</a> §9 → <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/pandera.ipynb">pandera</a> <span class="alt"><a href="labs/tools/html/pandera.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_4_data_quality.ipynb" title="D2_4_data_quality.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D2_4_data_quality.ipynb">Solution</a></span></li>
-    </ol>
-  </section>
+  <div class="day">
+    <div class="day-head" style="--c:var(--cyan)"><div><div class="t">Day 2</div><h3>Ingest &amp; Clean</h3></div><a class="btn" href="slides/day2.html">Open slides →</a></div>
+    <div class="scroll"><table>
+      <tr><th>Session</th><th>Lab notebook (opens in Colab)</th></tr>
+      <tr><td><b>1 · Batch ingestion by hand</b>: pagination, retries, full vs. incremental, cursors, idempotency</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_1_api_ingestion.ipynb">D2_1_api_ingestion</a></td></tr>
+      <tr><td><b>2 · Ingestion with dlt</b>: resources, write dispositions, incremental cursors, new columns</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_2_dlt_pipeline.ipynb">D2_2_dlt_pipeline</a></td></tr>
+      <tr><td><b>3 · Changes and history</b>: change feeds, latest per key, MERGE, deletes, SCD Type 2</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_3_cdc_merge_scd.ipynb">D2_3_cdc_merge_scd</a></td></tr>
+      <tr><td><b>4 · Bronze to silver with Polars</b>: expressions, timestamp formats, duplicates, time zones</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_4_bronze_to_silver.ipynb">D2_4_bronze_to_silver</a></td></tr>
+    </table></div>
+  </div>
 
-  <section class="day" style="--c:var(--coral)">
-    <h3><span>Day 3</span>Lakehouse, Scale &amp; Streaming</h3>
-    <ol>
-      <li><div><b>D3_1 · Open table formats &amp; the lakehouse</b><small>Iceberg metadata, snapshots, time travel, concurrency, schema and partition evolution</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/iceberg.ipynb">iceberg</a> <span class="alt"><a href="labs/tools/html/iceberg.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_1_iceberg_lakehouse.ipynb" title="D3_1_iceberg_lakehouse.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D3_1_iceberg_lakehouse.ipynb">Solution</a></span></li>
-      <li><div><b>D3_2 · Distributed processing with Spark</b><small>partitions, lazy plans, shuffles, joins, skew and salting, AQE</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/spark.ipynb">spark</a> <span class="alt"><a href="labs/tools/html/spark.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_2_spark.ipynb" title="D3_2_spark.ipynb">Lab</a> <span class="alt">Colab</span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D3_2_spark.ipynb">Solution</a></span></li>
-      <li><div><b>D3_3 · Streaming fundamentals</b><small>logs and offsets, delivery guarantees, event time, windows, watermarks</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D3_3_streaming.html">slides</a> <span class="alt"><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_3_streaming_demo.ipynb">demo</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_3_streaming_fundamentals.ipynb" title="D3_3_streaming_fundamentals.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D3_3_streaming_fundamentals.ipynb">Solution</a></span></li>
-      <li><div><b>D3_4 · Real-time pipelines into the lakehouse</b><small>exactly-once micro-batches, small files and compaction, near-real-time SLAs</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D3_4_stream_lakehouse.html">slides</a> <span class="alt"><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/D3_4_stream_lakehouse_demo.ipynb">demo</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_stream_to_lakehouse.ipynb" title="D3_4_stream_to_lakehouse.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D3_4_stream_to_lakehouse.ipynb">Solution</a></span></li>
-    </ol>
-  </section>
+  <div class="day">
+    <div class="day-head" style="--c:var(--coral)"><div><div class="t">Day 3</div><h3>Model &amp; Test</h3></div><a class="btn" href="slides/day3.html">Open slides →</a></div>
+    <div class="scroll"><table>
+      <tr><th>Session</th><th>Lab notebook (opens in Colab)</th></tr>
+      <tr><td><b>1 · Dimensional modeling</b>: metric definitions, grain, facts and dimensions, star, fan-out</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_1_dimensional_modeling.ipynb">D3_1_dimensional_modeling</a></td></tr>
+      <tr><td><b>2 · dbt</b>: sources, ref, staging to marts, views vs. tables, lineage</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_2_dbt_project.ipynb">D3_2_dbt_project</a></td></tr>
+      <tr><td><b>3 · Data quality</b>: dbt tests, warn vs. error, Pandera, quarantine</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_3_data_quality.ipynb">D3_3_data_quality</a></td></tr>
+      <tr><td><b>4 · Orchestration with Dagster</b>: assets, schedules, blocking checks, freshness and volume</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_orchestration_dagster.ipynb">D3_4_orchestration_dagster</a></td></tr>
+    </table></div>
+  </div>
 
-  <section class="day" style="--c:var(--purple)">
-    <h3><span>Day 4</span>Production: Orchestration, Reliability, Governance &amp; AI</h3>
-    <ol>
-      <li><div><b>D4_1 · Orchestration</b><small>assets, partitions, asset checks, schedules, sensors, dbt in the graph</small></div><span><span title="tool walkthrough, no slides">📓</span> <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dagster.ipynb">dagster</a> <span class="alt"><a href="labs/tools/html/dagster.html">read</a></span></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_1_orchestration_dagster.ipynb" title="D4_1_orchestration_dagster.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D4_1_orchestration_dagster.ipynb">Solution</a></span></li>
-      <li><div><b>D4_2 · Observability &amp; data contracts</b><small>freshness and volume monitors, ODCS, breaking changes, lineage</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D4_2_contracts_observability.html">slides</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_2_contracts_observability.ipynb" title="D4_2_contracts_observability.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D4_2_contracts_observability.ipynb">Solution</a></span></li>
-      <li><div><b>D4_3 · Governance, security &amp; privacy</b><small>PDPL, NDMO classification, Saudi PII, pseudonymization, masking, erasure</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D4_3_governance_privacy.html">slides</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_governance_privacy.ipynb" title="D4_3_governance_privacy.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D4_3_governance_privacy.ipynb">Solution</a></span></li>
-      <li><div><b>D4_4 · Data engineering for AI + capstone kickoff</b><small>semantic layer, embeddings, vector search, safe text-to-SQL</small></div><span><span title="concept deck">🖥️</span> <a href="slides/D4_4_data_for_ai.html">slides</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_4_data_for_ai.ipynb" title="D4_4_data_for_ai.ipynb">Lab</a></span><span><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/solutions/D4_4_data_for_ai.ipynb">Solution</a></span></li>
-    </ol>
-  </section>
+  <div class="day">
+    <div class="day-head" style="--c:var(--purple)"><div><div class="t">Day 4</div><h3>Scale &amp; Production</h3></div><a class="btn" href="slides/day4.html">Open slides →</a></div>
+    <div class="scroll"><table>
+      <tr><th>Session</th><th>Lab notebook (opens in Colab)</th></tr>
+      <tr><td><b>1 · Lakehouse with Iceberg</b>: atomic commits, snapshots, time travel, many engines</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_1_iceberg_lakehouse.ipynb">D4_1_iceberg_lakehouse</a></td></tr>
+      <tr><td><b>2 · Spark</b>: do you need it? driver and executors, lazy plans, shuffles</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_2_spark.ipynb">D4_2_spark</a> (Colab)</td></tr>
+      <tr><td><b>3 · Streaming</b>: logs and offsets, idempotency, event time, windows, watermarks</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_streaming_fundamentals.ipynb">D4_3_streaming_fundamentals</a></td></tr>
+      <tr><td><b>4 · Governance + capstone kickoff</b>: PDPL, NDMO levels, finding PII, pseudonymizing, masked views</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_4_governance_privacy.ipynb">D4_4_governance_privacy</a></td></tr>
+    </table></div>
+  </div>
 <!-- sessions:end -->
 
-  <section class="day" style="--c:var(--amber)">
-    <h3><span>Day 5</span>Capstone presentations <a class="btn" href="slides/capstone.html">Slides →</a></h3>
-    <p>Teams present across the four sessions (1–2, 3–5, 6–8, 9–10), then peer feedback, lessons learned and closing.</p>
-  </section>
+  <div class="day">
+    <div class="day-head" style="--c:var(--amber)"><div><div class="t">Day 5</div><h3>Capstone Project Presentations</h3></div><a class="btn" href="slides/day5.html">Open slides →</a></div>
+    <div class="scroll"><table>
+      <tr><th>Session</th><th>Notes</th></tr>
+      <tr><td><b>1 · Opening + presentations</b></td><td>Expectations (15'), teams 1–2</td></tr>
+      <tr><td><b>2 · Presentations</b></td><td>Teams 3–5</td></tr>
+      <tr><td><b>3 · Presentations</b></td><td>Teams 6–8</td></tr>
+      <tr><td><b>4 · Final presentations, review &amp; closing</b></td><td>Teams 9–10, peer feedback, lessons learned</td></tr>
+    </table></div>
+  </div>
 
-  <div class="cols">
+  <div class="two">
     <div>
       <h2>Capstone</h2>
       <p>Teams of 2–3 build a working data platform, choosing one of:</p>
       <ul>
-        <li><b>Qafila Lakehouse</b>: batch and streaming, from raw sources to governed marts and a near-real-time operations view</li>
-        <li><b>Open Data Platform</b>: Saudi open datasets in a lakehouse with tests, a semantic layer and a small dashboard</li>
-        <li><b>Real-time Operations Monitor</b>: event-time KPIs, SLA alerts, an Iceberg history table and replay</li>
+        <li><b>Qafila Lakehouse</b>: from raw sources to governed marts and an operations view</li>
+        <li><b>Open Data Platform</b>: Saudi open datasets with tests and a small dashboard</li>
+        <li><b>Real-time Operations Monitor</b>: replayed courier events, event-time KPIs and SLA alerts</li>
       </ul>
-      <p class="muted">Minimum: two source types, one command end to end, a layered model with documented grain, idempotent incremental loads, 8+ tests or contract checks, orchestration and a governance note. Starter kit: <a href="https://github.com/SDAIAAcademy/data-engineering/tree/main/labs/capstone">labs/capstone/</a>.</p>
+      <p>Submit a public GitHub repository link before Day 5 with working code, a README, the grain of every fact table, and test results. Starter kit: <a href="https://github.com/SDAIAAcademy/data-engineering/tree/main/labs/capstone">labs/capstone/</a>.</p>
     </div>
     <div>
       <h2>Rubric</h2>
       <div class="bar"><span>Functional end-to-end pipeline<i style="--w:100%"></i></span><b>30%</b></div>
       <div class="bar"><span>Architecture &amp; data modeling decisions<i style="--w:83%;--c:var(--cyan)"></i></span><b>25%</b></div>
-      <div class="bar"><span>Data quality, testing &amp; observability<i style="--w:67%;--c:var(--coral)"></i></span><b>20%</b></div>
-      <div class="bar"><span>Orchestration, governance &amp; operability<i style="--w:50%;--c:var(--purple)"></i></span><b>15%</b></div>
+      <div class="bar"><span>Data quality &amp; testing<i style="--w:67%;--c:var(--coral)"></i></span><b>20%</b></div>
+      <div class="bar"><span>Orchestration &amp; governance<i style="--w:50%;--c:var(--purple)"></i></span><b>15%</b></div>
       <div class="bar"><span>Presentation &amp; reproducibility<i style="--w:33%;--c:var(--amber)"></i></span><b>10%</b></div>
     </div>
   </div>
 
-  <div class="cols">
+  <div class="two">
     <div>
-      <h2>You will be able to</h2>
+      <h2>Participants will be able to</h2>
       <ul>
-        <li>Design a data platform and choose between warehouse, lake and lakehouse</li>
-        <li>Build incremental, idempotent ingestion from databases, APIs, files and CDC feeds</li>
-        <li>Model data dimensionally and transform it with dbt, tested and under contract</li>
-        <li>Work with Iceberg and decide when Spark or streaming is worth it</li>
-        <li>Orchestrate, monitor and govern pipelines under PDPL and NDMO</li>
-        <li>Prepare governed, AI-ready data: semantic layers, embeddings, safe text-to-SQL</li>
+        <li>Explain how a data platform fits together and choose between warehouse, lake and lakehouse</li>
+        <li>Write analytical SQL, including window functions, over databases and files</li>
+        <li>Build ingestion that is incremental and safe to re-run, from APIs and change feeds</li>
+        <li>Clean data, model it as a star schema and transform it with dbt under tests</li>
+        <li>Orchestrate pipelines and catch bad data before it reaches a report</li>
+        <li>Decide when Iceberg, Spark or streaming is worth it, and protect personal data under PDPL</li>
       </ul>
     </div>
     <div>
       <h2>Setup</h2>
-      <dl>
-        <dt>Audience</dt>
-        <dd>Developers, analysts and data scientists who know Python and SQL. No Spark, dbt, orchestration or streaming experience needed.</dd>
-        <dt>Environment</dt>
-        <dd>Google Colab, or any laptop with <code>uv</code>. No Docker or cloud account; Spark needs Java 17+. See <a href="https://github.com/SDAIAAcademy/data-engineering/tree/main/labs#readme">labs/README.md</a>.</dd>
-        <dt>Tool notebooks</dt>
-        <dd>Walked together in class, with no exercises: you practise in the lab after each one. ➕ sections are for your own pace.</dd>
-        <dt>Stack</dt>
-        <dd>DuckDB · Polars · Parquet/Arrow · dlt · dbt · Iceberg · PySpark 4 · Pandera · Dagster · ODCS · model2vec</dd>
-      </dl>
+      <p><b>Audience:</b> fresh CS graduates, or anyone comfortable with Python and basic SQL (SELECT, JOIN, GROUP BY). No data engineering experience needed.</p>
+      <p><b>Environment:</b> Google Colab, or a laptop with <code>uv</code>. No Docker or cloud account. Lab 1.1 starts with <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/00_setup_check.ipynb">00_setup_check</a>; see <a href="https://github.com/SDAIAAcademy/data-engineering/tree/main/labs#readme">labs/README.md</a>.</p>
+      <p><b>Stack:</b> DuckDB · Parquet · dlt · Polars · dbt · Pandera · Dagster · Apache Iceberg · PySpark.</p>
     </div>
   </div>
+
+  <h2>Go deeper (optional)</h2>
+  <p style="color:var(--muted)">Longer walkthroughs of each tool, for your own pace after class. Nothing in the sessions or labs depends on them. <b>Colab</b> runs one; <b>read</b> shows it with every output.</p>
+  <div class="day">
+<!-- walkthroughs:begin -->
+    <div class="scroll"><table>
+      <tr><th>Walkthrough</th><th>Goes deeper than</th><th>Open</th></tr>
+      <tr><td>DuckDB, an analytical database in a library</td><td>Session 1.2</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/duckdb.ipynb">Colab</a> · <a href="labs/tools/html/duckdb.html">read</a></td></tr>
+      <tr><td>SQL window functions, step by step</td><td>Session 1.3</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/sql_windows.ipynb">Colab</a> · <a href="labs/tools/html/sql_windows.html">read</a></td></tr>
+      <tr><td>dlt, from a hand-written loader to an incremental pipeline</td><td>Session 2.2</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dlt.ipynb">Colab</a> · <a href="labs/tools/html/dlt.html">read</a></td></tr>
+      <tr><td>Polars, one idea at a time</td><td>Session 2.4</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/polars.ipynb">Colab</a> · <a href="labs/tools/html/polars.html">read</a></td></tr>
+      <tr><td>dbt, from an empty folder to a tested report</td><td>Session 3.2, 3.3</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dbt.ipynb">Colab</a> · <a href="labs/tools/html/dbt.html">read</a></td></tr>
+      <tr><td>Pandera, checks at the door</td><td>Session 3.3</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/pandera.ipynb">Colab</a> · <a href="labs/tools/html/pandera.html">read</a></td></tr>
+      <tr><td>Dagster, assets on a schedule</td><td>Session 3.4</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/dagster.ipynb">Colab</a> · <a href="labs/tools/html/dagster.html">read</a></td></tr>
+      <tr><td>Iceberg, open table formats on a lightboard</td><td>Session 4.1</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/iceberg.ipynb">Colab</a> · <a href="labs/tools/html/iceberg.html">read</a></td></tr>
+      <tr><td>Spark, live and visual</td><td>Session 4.2</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/tools/spark.ipynb">Colab</a> · <a href="labs/tools/html/spark.html">read</a></td></tr>
+      <tr><td>A stream you can see: logs, offsets, windows</td><td>Session 4.3</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/streaming.ipynb">Colab</a></td></tr>
+      <tr><td>Beyond the course: streams into a lakehouse</td><td>Session 4.3</td><td><a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/demos/stream_to_lakehouse.ipynb">Colab</a></td></tr>
+    </table></div>
+<!-- walkthroughs:end -->
+  </div>
 </main>
-<footer><div class="wrap">SDAIA Academy · Data Engineering Track · Modern Data Engineering</div></footer>
+<footer><div class="wrap">SDAIA Academy · AI Engineering Track · Modern Data Engineering</div></footer>
 <script src="https://sdaiaacademy.github.io/slides/academy.js"></script>
 </body>
 </html>

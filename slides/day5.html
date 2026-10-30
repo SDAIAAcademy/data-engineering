@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Capstone · Modern Data Engineering</title>
+<title>Day 5 · Modern Data Engineering</title>
 <link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
 <link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
 <link rel="stylesheet" href="../assets/course.css">
@@ -20,153 +20,14 @@
 </style>
 </head>
 <body>
-<div class="deck" data-day="Capstone" data-course="Modern Data Engineering" data-track="ai-engineering">
-
-<section class="slide section" data-session="The brief">
-  <div class="kicker">Capstone</div>
-  <h1>The capstone brief</h1>
-  <p class="lead mt">What teams build, what every project must show, and how it is scored.</p>
-  <div class="sess-no">A</div>
-</section>
-
-<section class="slide top" data-label="You are here">
-  <div class="kicker">The whole platform</div>
-  <h2>Every stage, end to end, in one project</h2>
-  <div class="pmap" data-here=""></div>
-  <aside class="notes">The capstone uses the whole map: sources to serve, with orchestration, observability and governance across it. Ask each team to point at the stages their project covers, and at the tool they chose for each.</aside>
-</section>
-
-<section class="slide dark" data-label="Capstone kickoff">
-  <div class="kicker">Capstone kickoff</div>
-  <h1>Build it. Run it. Defend it.</h1>
-  <p class="lead mt">Teams of 2–3 deliver a working data platform and present it on Day 5.</p>
-  <div class="cols cols-3 mt">
-    <div class="card c-teal"><h4>1 · Qafila Lakehouse</h4><p class="small mb0">Batch + streaming, raw to governed marts, a near-real-time ops view.</p></div>
-    <div class="card c-cyan"><h4>2 · Open Data Platform</h4><p class="small mb0">Saudi open datasets into a lakehouse with tests, a semantic layer and a dashboard.</p></div>
-    <div class="card c-coral"><h4>3 · Real-time Ops Monitor</h4><p class="small mb0">Event-time KPIs, SLA alerts, Iceberg history and replay.</p></div>
-  </div>
-</section>
-
-<section class="slide" data-label="Capstone requirements">
-  <div class="kicker">Minimum requirements</div>
-  <h2>What every project must show</h2>
-  <div class="cols cols-2">
-    <ol class="bullets small">
-      <li>An end-to-end pipeline from <b>two or more source types</b> to analytics-ready tables, <b>one command</b> to run.</li>
-      <li>A <b>layered model</b> (bronze <code>raw</code> → silver <code>staging</code> → gold <code>marts</code>) with the <b>grain</b> of every fact table written down.</li>
-      <li><b>Incremental</b> loading that's safe to re-run, demonstrated live.</li>
-      <li>At least <b>8 tests or contract checks</b>, one catching a <b>real</b> problem.</li>
-      <li><b>Orchestration</b> (or a justified alternative) and a <b>governance note</b>: classification and protection of every personal-data column.</li>
-    </ol>
-    <div class="stack small">
-      <div class="card c-navy flat"><b>Submission</b>: repository with code, README from <code>TEMPLATE_README.md</code>, and how to run it.</div>
-      <div class="card c-coral flat"><b>Presentation</b>: 10 min talk + live demo, 5 min technical Q&amp;A.</div>
-      <div class="card c-teal flat"><b>Deadline</b>: repository link before Day 5, Session 1.</div>
-    </div>
-  </div>
-</section>
-
-<section class="slide" data-label="Capstone rubric">
-  <div class="kicker">Evaluation rubric</div>
-  <h2>How capstones are scored</h2>
-  <div class="cols cols-2 mid">
-    <div class="bars">
-      <div class="row"><span>Functional end-to-end pipeline</span><div class="bar" style="--w:100%"></div><span class="val">30%</span></div>
-      <div class="row"><span>Architecture &amp; modeling</span><div class="bar" style="--w:83%;--c:var(--cyan)"></div><span class="val">25%</span></div>
-      <div class="row"><span>Quality, testing &amp; observability</span><div class="bar" style="--w:67%;--c:var(--coral)"></div><span class="val">20%</span></div>
-      <div class="row"><span>Orchestration, governance &amp; ops</span><div class="bar" style="--w:50%;--c:var(--purple)"></div><span class="val">15%</span></div>
-      <div class="row"><span>Presentation &amp; reproducibility</span><div class="bar" style="--w:33%;--c:var(--amber)"></div><span class="val">10%</span></div>
-    </div>
-    <div class="callout tip small"><b>What earns top marks:</b> it runs from a clean clone, every design choice has a reason, the grain is explicit, a re-run changes nothing, a test caught something real, and you know where personal data lives and who can see it.</div>
-  </div>
-</section>
-
-<section class="slide" data-label="Capstone kit">
-  <div class="kicker">Starter kit</div>
-  <h2><code>labs/capstone/</code>: a working baseline to build on</h2>
-  <div class="cols cols-2">
-    <pre class="code s" data-file="terminal"><code class="language-bash">cd labs
-uv run python capstone/pipeline.py
-# run succeeded: 30 assets materialized, 45 checks
-#   ⚠️ raw/payments · payments_contract:
-#      payments_positive_amount: 16 (mustBe 0)
-#   ⚠️ marts/fct_orders · assert_order_totals_match_payments
-uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
-    <div class="stack dense">
-      <div class="card c-teal flat"><b>Included</b>: 9 ingestion assets → dbt project → Iceberg gold table, contract check, volume monitor, nightly schedule.</div>
-      <div class="card c-coral flat"><b>Weaknesses to fix</b>: full refreshes everywhere, no streaming path, contract breaches only warn, raw PII unprotected, no partitions.</div>
-    </div>
-  </div>
-</section>
-
-<section class="slide section" data-session="Checkpoints">
-  <div class="kicker">Capstone</div>
-  <h1>Checkpoints during the week</h1>
-  <p class="lead mt">One slide at the end of Days 1–3: the decision each team makes that evening.</p>
-  <div class="sess-no">B</div>
-</section>
-
-<section class="slide" data-label="Checkpoint · end of Day 1">
-  <div class="kicker">Capstone: start thinking</div>
-  <h2>Form teams of 2–3 by the end of Day 2</h2>
-  <div class="cols cols-3">
-    <div class="card c-teal"><h4>1 · Qafila Lakehouse</h4><p class="small mb0">Batch + streaming platform for Qafila, from raw sources to governed marts and a near-real-time view.</p></div>
-    <div class="card c-cyan"><h4>2 · Open Data Platform</h4><p class="small mb0">Ingest Saudi open datasets into a lakehouse with tests, a semantic layer and a small dashboard.</p></div>
-    <div class="card c-coral"><h4>3 · Real-time Operations Monitor</h4><p class="small mb0">Event-time KPIs, SLA alerts, an Iceberg history table and replay.</p></div>
-  </div>
-  <div class="callout tip mt"><b>Tonight (optional, 30 min):</b> pick a use case and look at the data. Bring one sentence: <i>"Our platform turns ___ into ___ for ___, refreshed every ___."</i></div>
-</section>
-
-<section class="slide" data-label="Checkpoint · end of Day 2">
-<div class="kicker">Capstone</div>
-<h2>Your capstone plan starts with these decisions</h2>
-<ol class="bullets small"><li><b>Sources:</b> which records arrive, and from where?</li><li><b>Grain:</b> what does one row represent in each fact?</li><li><b>Layers:</b> which cleaning and modeling rules belong in each?</li><li><b>Checks:</b> what would make the result untrustworthy?</li><li><b>Refresh:</b> how will updates, late arrivals, and corrections reach the model?</li></ol>
-<aside class="notes">Reuse the lab project as a starting point. Require concrete grain sentences and actual test examples rather than only tool names. Have teams explain how they will detect duplicated amounts after joins.</aside>
-</section>
-
-<section class="slide" data-label="Checkpoint · end of Day 3">
-  <div class="kicker">Capstone</div>
-  <h2>Does your project need a table format or a stream?</h2>
-  <div class="cols cols-2">
-    <ol class="bullets small">
-      <li><b>Storage</b>: DuckDB file, Parquet, or Iceberg? Write down why.</li>
-      <li><b>Freshness</b>: what's the slowest acceptable refresh for each output?</li>
-      <li><b>Late or duplicated data</b>: which sources have it, and what's your key?</li>
-      <li><b>Scale</b>: would any step need Spark at 100× today's volume?</li>
-    </ol>
-    <div class="callout tip small"><b>Option C</b> (real-time operations monitor) builds directly on Labs 3.3 and 3.4. Tomorrow adds orchestration, contracts and governance, and the capstone kit.</div>
-  </div>
-</section>
-
-<section class="slide" data-label="Capstone plan">
-  <div class="kicker">Plan your evening</div>
-  <h2>A realistic capstone timeline</h2>
-  <div class="cols cols-4 gap-s">
-    <div class="card c-teal"><h4>Now (10')</h4><p class="small mb0">Confirm option, sources and scope with the instructor.</p></div>
-    <div class="card c-cyan"><h4>Block 1 (1–2h)</h4><p class="small mb0">Sources into raw; one command end to end, starting from <code>pipeline.py</code>.</p></div>
-    <div class="card c-coral"><h4>Block 2 (1–2h)</h4><p class="small mb0">Models with grain, incremental loads, tests and contract checks.</p></div>
-    <div class="card c-amber"><h4>Block 3 (1h)</h4><p class="small mb0">Orchestration, governance note, README, 6–8 slides, one timed rehearsal.</p></div>
-  </div>
-  <div class="callout warn mt small"><b>Scope down early.</b> A small platform that runs from a clean clone beats an ambitious one that fails in the demo. Record a backup video of the demo.</div>
-</section>
-
-<section class="slide dark" data-label="Next">
-  <div class="kicker">Tomorrow · Day 5</div>
-  <h1>Capstone presentations</h1>
-  <p class="lead mt">Demonstrate, explain and defend a working data platform.</p>
-  <div class="cols cols-3 mt">
-    <div class="card c-teal"><h4>Bring</h4><p class="small mb0">Repository link, a running pipeline (and a recorded backup), your slides.</p></div>
-    <div class="card c-cyan"><h4>Expect</h4><p class="small mb0">Questions on grain, idempotency, failure handling and personal data.</p></div>
-    <div class="card c-coral"><h4>Give</h4><p class="small mb0">Structured peer feedback to the other teams.</p></div>
-  </div>
-</section>
+<div class="deck" data-day="Day 5" data-course="Modern Data Engineering" data-track="ai-engineering">
 
 <section class="slide title" data-label="Welcome">
   <div class="kicker">SDAIA Academy · Modern Data Engineering</div>
   <h1>Capstone Project Presentations</h1>
   <p class="lead mt">Day 5: demonstrate, explain and defend a working data platform</p>
   <div class="meta">
-    <span class="track">Data Engineering Track</span>
+    <span class="track">AI Engineering Track</span>
     <span>Day 5 of 5</span>
     <span>Team demos · technical Q&amp;A · peer review</span>
   </div>
@@ -176,7 +37,7 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
   <div class="kicker">Today</div>
   <h2>Day 5 agenda</h2>
   <div class="agenda">
-    <div class="item"><span><b>Session 1 · Opening + presentations</b><small>Evaluation expectations (15'), then teams 1–2</small></span></div>
+    <div class="item"><span><b>Session 1 · Opening + presentations</b><small>Evaluation expectations, then teams 1–2</small></span></div>
     <div class="item"><span><b>Session 2 · Presentations</b><small>Teams 3–5</small></span></div>
     <div class="item"><span><b>Session 3 · Presentations</b><small>Teams 6–8</small></span></div>
     <div class="item"><span><b>Session 4 · Final presentations + review</b><small>Teams 9–10, peer feedback, instructor review, lessons learned, closing</small></span></div>
@@ -217,7 +78,7 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
       <li><b>Model</b>: facts and dimensions, with the grain in one sentence each</li>
     </ol>
     <ol class="bullets small" start="5" style="counter-reset: n 4">
-      <li><b>Trust</b>: tests and contracts, the real problem one of them caught</li>
+      <li><b>Trust</b>: tests and checks, the real problem one of them caught</li>
       <li><b>Operations + governance</b>: schedule, re-runs, personal data</li>
       <li><b>Live demo</b>: run it, re-run it, query the result</li>
       <li><b>Lessons and next steps</b>: what breaks first at 100× the data</li>
@@ -232,8 +93,8 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
     <tr><th>Criterion</th><th class="num">Weight</th><th>Strong evidence</th></tr>
     <tr><td>Functional end-to-end pipeline</td><td class="num">30%</td><td>Two or more source types to analytics-ready tables with one command, from a clean clone, live</td></tr>
     <tr><td>Architecture &amp; data modeling</td><td class="num">25%</td><td>Layers with clear jobs; grain stated and tested; tool choices justified by data size, freshness and team</td></tr>
-    <tr><td>Data quality, testing &amp; observability</td><td class="num">20%</td><td>8+ tests or contract checks with severities; one caught a real issue; freshness or volume monitored</td></tr>
-    <tr><td>Orchestration, governance &amp; operability</td><td class="num">15%</td><td>Idempotent incremental loads shown live; schedule or sensor; personal data classified and protected</td></tr>
+    <tr><td>Data quality &amp; testing</td><td class="num">20%</td><td>8+ data tests with severities; one caught a real issue; freshness or volume checked</td></tr>
+    <tr><td>Orchestration &amp; governance</td><td class="num">15%</td><td>Idempotent incremental loads shown live; a schedule; personal data classified and protected</td></tr>
     <tr><td>Presentation &amp; reproducibility</td><td class="num">10%</td><td>Clear story, on time; README lets a stranger rebuild everything</td></tr>
   </table>
 </section>
@@ -368,29 +229,36 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
   <aside class="notes">Adapt this slide live: replace bullets with specific observations from today's presentations before the session or during the last break.</aside>
 </section>
 
+<section class="slide top" data-label="The platform">
+  <div class="kicker">What you can now build</div>
+  <h2>Every stage, end to end</h2>
+  <div class="pmap" data-here=""></div>
+  <aside class="notes">The map from Day 1. Point at each stage and ask a team to name what theirs used, and why.</aside>
+</section>
+
 <section class="slide" data-label="Recap">
   <div class="kicker">The whole journey</div>
-  <h2>From raw sources to governed, AI-ready data</h2>
+  <h2>From raw sources to governed, trusted data</h2>
   <div class="flow">
     <div class="step c-navy"><b>Land</b>files, APIs, CDC, dlt</div>
     <div class="arrow">→</div>
     <div class="step c-teal"><b>Model</b>DuckDB, star schema, dbt</div>
     <div class="arrow">→</div>
-    <div class="step c-teal"><b>Trust</b>tests, contracts, quarantine</div>
+    <div class="step c-teal"><b>Trust</b>tests, checks, quarantine</div>
     <div class="arrow">→</div>
     <div class="step c-cyan"><b>Scale</b>Iceberg, Spark, streams</div>
     <div class="arrow">→</div>
     <div class="step c-coral"><b>Operate</b>orchestration, monitors</div>
     <div class="arrow">→</div>
-    <div class="step c-amber"><b>Govern + serve</b>PDPL, semantic layer, AI</div>
+    <div class="step c-amber"><b>Govern</b>PDPL, masking, access</div>
   </div>
   <table class="t small mt">
     <tr><th>If you need…</th><th>Start with…</th></tr>
     <tr><td>Analytics on up to ~100s of GB</td><td>DuckDB or Polars on one machine, Parquet files, dbt</td></tr>
-    <tr><td>Many engines on one copy of the data</td><td>Iceberg tables behind a REST catalog</td></tr>
-    <tr><td>Fresh data within minutes</td><td>CDC or events into a log, micro-batches into Iceberg, idempotent sinks</td></tr>
-    <tr><td>Terabytes per job, or a shared cluster</td><td>Spark (managed), with an eye on shuffles, skew and file sizes</td></tr>
-    <tr><td>Consistent numbers for people and AI</td><td>A tested star schema with a semantic layer on top</td></tr>
+    <tr><td>Many engines on one copy of the data</td><td>Iceberg tables over Parquet files</td></tr>
+    <tr><td>Fresh data within minutes</td><td>CDC or events into a log, read by an idempotent consumer</td></tr>
+    <tr><td>Terabytes per job, or a shared cluster</td><td>Spark (managed), with an eye on shuffles and file sizes</td></tr>
+    <tr><td>Consistent numbers across every report</td><td>A tested star schema, with each metric defined once</td></tr>
   </table>
 </section>
 
@@ -401,7 +269,7 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
     <div class="card c-amber"><h4>Cloud data platforms</h4><p class="small mb0">Object storage, IAM, managed warehouses and catalogs, cost control</p></div>
     <div class="card c-amber"><h4>Streaming at scale</h4><p class="small mb0">Kafka operations, Flink, exactly-once end to end</p></div>
     <div class="card c-amber"><h4>Data governance</h4><p class="small mb0">Catalogs, lineage, policy-as-code, privacy engineering</p></div>
-    <div class="card c-amber"><h4>Data for ML &amp; AI</h4><p class="small mb0">Feature pipelines, embeddings at scale, MLOps</p></div>
+    <div class="card c-amber"><h4>Data for ML &amp; AI</h4><p class="small mb0">Feature pipelines, embeddings (Applied NLP), MLOps</p></div>
   </div>
   <div class="cols cols-2 mt">
     <div class="callout tip small"><b>This week:</b> push your capstone repository (public or internal), add an architecture diagram, and write a short post on one thing that surprised you.</div>
@@ -413,6 +281,7 @@ uv run dagster dev -f capstone/pipeline.py   # the UI</code></pre>
   <div class="kicker">Modern Data Engineering · SDAIA Academy</div>
   <h1>Thank you</h1>
   <p class="lead mt">Please complete the course feedback survey before you leave. It directly shapes the next cohort.</p>
+  <div class="art-row mt" style="justify-content:center"><div class="art customer" style="width:130px"></div><div class="art courier" style="width:130px"></div><div class="art engineer" style="width:130px"></div><div class="art analyst" style="width:130px"></div><div class="art steward" style="width:130px"></div></div>
   <div class="cols cols-3 mt">
     <div class="card c-teal"><h4>Survey</h4><p class="small mb0">Link shared in the course channel</p></div>
     <div class="card c-cyan"><h4>Certificates</h4><p class="small mb0">Issued after capstone submission is confirmed</p></div>

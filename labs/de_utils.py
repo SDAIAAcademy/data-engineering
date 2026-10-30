@@ -389,3 +389,28 @@ class DbtResult:
         pass
 
 
+
+def dbt_lab_copy(out: Path | str) -> tuple[Path, Path]:
+    """A private copy of the Qafila dbt project and of the warehouse for one lab: (project_dir, duckdb_file).
+
+    The copy leaves out what Day 3 doesn't teach (incremental config, model contract, unit tests): plain tables and
+    tests, the same star. The capstone uses the full project in dbt_qafila/.
+    """
+    import re
+
+    out = Path(out)
+    proj, db = out / "dbt_qafila", out / "qafila.duckdb"
+    shutil.copytree(DBT_PROJECT, proj, ignore=shutil.ignore_patterns("target", "logs", "dbt_packages"))
+    shutil.copy(build_warehouse(), db)
+
+    def edit(rel, fn):
+        p = proj / rel
+        p.write_text(fn(p.read_text(encoding="utf-8")), encoding="utf-8")
+
+    edit("models/marts/fct_order_items.sql", lambda t: re.sub(
+        r"\s*\{%\s*if is_incremental\(\)\s*%\}.*?\{%\s*endif\s*%\}", "",
+        re.sub(r"-- Incremental:.*\n", "", re.sub(r"\{\{\s*config\(.*?\)\s*\}\}\s*", "", t, count=1, flags=re.S)), flags=re.S))
+    edit("models/marts/_marts.yml", lambda t: re.sub(
+        r"\n *constraints:.*|\n *data_type:.*", "", t.replace("    config:\n      contract:\n        enforced: true\n", "")))
+    edit("models/staging/_staging.yml", lambda t: t.split("\nunit_tests:")[0].rstrip() + "\n")
+    return proj, db

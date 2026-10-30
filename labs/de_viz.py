@@ -1993,7 +1993,7 @@ def _dbt_graph(project_dir):
     for uid, n in m["nodes"].items():
         if n["resource_type"] in ("model", "seed", "snapshot"):
             kind = n["config"].get("materialized", n["resource_type"])
-            nodes[uid] = dict(name=n["name"], kind=kind, sub=f"{kind} · {n['schema']}", parents=n["depends_on"]["nodes"])
+            nodes[uid] = dict(name=n["name"], kind=kind, sub=f"{kind} · {n['schema']}", parents=n["depends_on"].get("nodes", []))
     for n in nodes.values():
         n["parents"] = [p for p in n["parents"] if p in nodes]
 
