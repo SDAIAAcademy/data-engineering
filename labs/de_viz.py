@@ -75,23 +75,20 @@ SOURCES = [("App database", "qafila_oltp.sqlite"), ("Payments API", "pages, curs
            ("Supplier files", "weekly CSVs"), ("Reviews", "free text")]
 # (key, name, first stage, last stage, what it does here, sessions). Order sets the packing: wide tools first.
 TOOLS = [
-    ("dlt", "dlt", "ingest", "ingest", "incremental loads, schema drift", "D1_3"),
-    ("duckdb", "DuckDB", "store", "serve", "the SQL engine in every lab", "D1_1"),
-    ("cdc", "CDC + MERGE", "ingest", "ingest", "changes, deletes, SCD2", "D1_4"),
-    ("parquet", "Parquet", "store", "store", "columnar files", "D1_2"),
-    ("polars", "Polars", "transform", "test", "DataFrames, lazy plans, checks", "D2_1"),
-    ("semantic", "Semantic layer", "serve", "serve", "metrics defined once", "D4_4"),
-    ("streaming", "Streaming", "ingest", "ingest", "events as they happen", "D3_3 · D3_4"),
-    ("iceberg", "Iceberg", "store", "store", "tables on files, time travel", "D3_1"),
-    ("dbt", "dbt", "transform", "test", "models, tests, docs, lineage", "D2_2 · D2_3"),
-    ("ai", "Embeddings", "serve", "serve", "search, text-to-SQL", "D4_4"),
-    ("spark", "Spark", "transform", "transform", "the same work on a cluster", "D3_2"),
-    ("pandera", "Pandera", "test", "test", "schemas for DataFrames", "D2_4"),
-    ("contracts", "Contracts", "test", "test", "ODCS: what consumers rely on", "D4_2"),
+    ("dlt", "dlt", "ingest", "ingest", "incremental loads, schema drift", "D2_2"),
+    ("duckdb", "DuckDB", "store", "serve", "the SQL engine in every lab", "D1_2"),
+    ("cdc", "CDC + MERGE", "ingest", "ingest", "changes, deletes, SCD2", "D2_3"),
+    ("parquet", "Parquet", "store", "store", "columnar files", "D1_4"),
+    ("polars", "Polars", "transform", "test", "DataFrames, cleaning, checks", "D2_4"),
+    ("streaming", "Streaming", "ingest", "ingest", "events as they happen", "D4_3"),
+    ("iceberg", "Iceberg", "store", "store", "tables on files, time travel", "D4_1"),
+    ("dbt", "dbt", "transform", "test", "models, tests, lineage", "D3_2 · D3_3"),
+    ("spark", "Spark", "transform", "transform", "the same work on a cluster", "D4_2"),
+    ("pandera", "Pandera", "test", "test", "schemas for DataFrames", "D3_3"),
 ]
-BANDS = [("dagster", "Orchestrate", "Dagster: assets, schedules, checks", "D4_1"),
-         ("observe", "Observe", "freshness, volume, schema, distribution, lineage", "D4_2"),
-         ("govern", "Govern", "PDPL, masking, access", "D4_3")]
+BANDS = [("dagster", "Orchestrate", "Dagster: assets, schedules, checks", "D3_4"),
+         ("observe", "Observe", "freshness and volume checks, lineage", "D3_4"),
+         ("govern", "Govern", "PDPL, masking, access", "D4_4")]
 
 _MAP_CSS = """
 #%%ID%% {font-family: system-ui, sans-serif; color: %%INK%%; background: #fff; border: 1px solid %%GRID%%;

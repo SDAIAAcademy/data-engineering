@@ -1,13 +1,12 @@
 # %% [markdown]
-# # Lab 0 · Setup check
+# # Setup check
 #
-# Run this notebook **before Day 1** (2–5 minutes). It:
+# Day 1 · Session 1: Lab 1.1 starts here (2–5 minutes, run it in a second tab). It:
 #
 # - installs packages on Colab and generates the Qafila course data,
 # - checks your Python packages and tool versions,
-# - builds the shared DuckDB warehouse that the Day 2–4 labs start from,
-# - downloads the embedding model used on Day 4, so class time isn't spent waiting,
-# - runs a short smoke test of DuckDB, Iceberg, dbt, and (optionally) Java for Spark and your LLM endpoint.
+# - builds the shared DuckDB warehouse that later labs start from,
+# - runs a short smoke test of DuckDB, Iceberg, dbt, and Java for Spark.
 #
 # Locally: `cd labs && uv sync && uv run jupyter lab`. On Colab: just run the cells (a CPU runtime is enough).
 
@@ -35,18 +34,17 @@ print("data:", U.RAW, "| quick mode:", U.QUICK)
 # ## 1 · Packages
 
 # %%
-import importlib
 import platform
 from importlib.metadata import PackageNotFoundError, version
 
 packages = ["duckdb", "polars", "pyarrow", "pandas", "dlt", "dbt-core", "dbt-duckdb", "pyiceberg",
-            "pandera", "dagster", "dagster-dbt", "model2vec", "openai", "pyspark"]
+            "pandera", "dagster", "dagster-dbt", "pyspark"]
 rows = []
 for name in packages:
     try:
         rows.append((name, version(name)))
     except PackageNotFoundError:
-        rows.append((name, "optional: Lab 3.2 only" if name == "pyspark" else "MISSING"))
+        rows.append((name, "optional: Lab 4.2 only" if name == "pyspark" else "MISSING"))
 
 import pandas as pd
 
@@ -56,7 +54,7 @@ pd.DataFrame(rows, columns=["package", "version"])
 # %% [markdown]
 # ## 2 · Data and the shared warehouse
 #
-# `prepare_data.py` generated Qafila's raw sources (deterministic and synthetic: no real personal data). `build_warehouse()` loads them into the `raw` schema of `warehouse/qafila.duckdb`, the starting point of the Day 2–4 labs.
+# `prepare_data.py` generated Qafila's raw sources (deterministic and synthetic: no real personal data). `build_warehouse()` loads them into the `raw` schema of `warehouse/qafila.duckdb`, the starting point of many labs.
 
 # %%
 import duckdb
@@ -78,26 +76,7 @@ U.check(raw_tables >= 9, f"warehouse ready: {raw_tables} raw tables in {db.name}
 pd.DataFrame(sources.items(), columns=["source", "rows / files"])
 
 # %% [markdown]
-# ## 3 · Download the embedding model (Day 4)
-#
-# `potion-multilingual-128M` is a static (model2vec) embedding model: about 500 MB, fast on CPU, Arabic and English. Already-downloaded models are skipped.
-
-# %%
-for attempt in range(3):  # the Hub occasionally drops connections; retry
-    try:
-        vecs = U.embed(["طماطم طازجة", "fresh tomatoes", "laundry detergent"])
-        break
-    except Exception as e:
-        err = e
-else:
-    raise RuntimeError(f"Model download failed, re-run this cell later: {err}")
-sim = vecs @ vecs.T
-print(f"embedding dims: {vecs.shape[1]}")
-print(f"'طماطم طازجة' vs 'fresh tomatoes': {sim[0, 1]:.2f} | vs 'laundry detergent': {sim[0, 2]:.2f}")
-U.check(sim[0, 1] > sim[0, 2], "cross-lingual similarity works")
-
-# %% [markdown]
-# ## 4 · Smoke test: Iceberg, DuckDB and dbt
+# ## 3 · Smoke test: Iceberg, DuckDB and dbt
 
 # %%
 import pyarrow as pa
@@ -118,28 +97,20 @@ res = U.run_dbt(["parse"], db_path=lab / "dbt_smoke.duckdb", quiet=True)
 U.check(res.success, "dbt parsed the Qafila project")
 
 # %% [markdown]
-# ## 5 · Optional: Java for Spark (Lab 3.2) and an LLM endpoint (Lab 4.4)
+# ## 4 · Java for Spark (Lab 4.2)
 #
-# Spark 4 needs **Java 17+**. On Colab, Lab 3.2 installs it for you. Locally, install a JDK (for example Temurin 21), set `JAVA_HOME`, and run `uv sync --extra spark`. If you don't have Java, run Lab 3.2 on Colab.
-#
-# Lab 4.4 works without an LLM. To try the LLM text-to-SQL path, copy `.env.example` to `.env` and fill in any OpenAI-compatible endpoint.
+# Spark 4 needs **Java 17+**. On Colab, Lab 4.2 installs it for you. Locally, install a JDK (for example Temurin 21), set `JAVA_HOME`, and run `uv sync --extra spark`. If you don't have Java, run Lab 4.2 on Colab.
 
 # %%
 java = U._java_major()
 if java >= 17:
-    print(f"Java {java}: Lab 3.2 can run locally (after `uv sync --extra spark`).")
+    print(f"Java {java}: Lab 4.2 can run locally (after `uv sync --extra spark`).")
 elif IN_COLAB:
-    print("Colab: Lab 3.2 installs Java 17 when it starts Spark.")
+    print("Colab: Lab 4.2 installs Java 17 when it starts Spark.")
 else:
-    print(f"Java {java or 'not found'}: run Lab 3.2 on Colab, or install Java 17+.")
-
-llm = U.get_llm()
-if llm is None:
-    print("No LLM endpoint configured: Lab 4.4 uses its rule-based planner (that's fine).")
-else:
-    print("LLM says:", llm([{"role": "user", "content": "Reply with one word: ready"}], max_tokens=5))
+    print(f"Java {java or 'not found'}: run Lab 4.2 on Colab, or install Java 17+.")
 
 # %% [markdown]
 # ## You're ready
 #
-# If every package shows a version (PySpark is optional), every ✅ printed and the embedding model downloaded, you're set for Day 1.
+# If every package shows a version (PySpark is optional) and every ✅ printed, go back to Lab 1.1.

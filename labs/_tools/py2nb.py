@@ -29,7 +29,7 @@ LABS = Path(__file__).resolve().parents[1]
 SRC = LABS / "_src"
 DEMO_SRC = SRC / "demos"
 TOOL_SRC = SRC / "tools"
-WALKTHROUGHS = {"00_sql_windows"}   # self-paced, no exercises: one notebook in labs/, no copy in solutions/
+WALKTHROUGHS = set()   # self-paced, no exercises: one notebook in labs/, no copy in solutions/
 
 
 def strip_solutions(lines: list[str], student: bool) -> list[str]:

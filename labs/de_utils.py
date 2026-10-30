@@ -1,8 +1,8 @@
 """Shared plumbing for the Modern Data Engineering labs.
 
 Concepts are taught in the notebooks; this module only holds the boring, repeated
-parts: paths, the DuckDB warehouse, a mock payments API, the Iceberg catalog, dbt and
-timing helpers, and an optional LLM client.
+parts: paths, the DuckDB warehouse, a mock payments API, the Iceberg catalog, dbt
+and timing helpers.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ LABS = Path(__file__).resolve().parent
 DATA = LABS / "data"
 RAW = DATA / "raw"
 ARTIFACTS = LABS / "artifacts"        # per-lab outputs (git-ignored)
-WAREHOUSE = LABS / "warehouse"        # shared DuckDB warehouse + Iceberg catalog (git-ignored)
+WAREHOUSE = Path(os.getenv("DE_WAREHOUSE", LABS / "warehouse"))  # shared DuckDB warehouse + Iceberg catalog (git-ignored)
 WAREHOUSE_DB = WAREHOUSE / "qafila.duckdb"
 ICEBERG = WAREHOUSE / "iceberg"
 DBT_PROJECT = LABS / "dbt_qafila"
@@ -37,15 +37,6 @@ QUICK = os.getenv("DE_QUICK", "0") == "1"
 _BIN = str(Path(sys.executable).parent)
 if _BIN not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = _BIN + os.pathsep + os.environ.get("PATH", "")
-
-try:  # optional .env with LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
-    from dotenv import load_dotenv
-
-    load_dotenv(LABS / ".env")
-except ImportError:
-    pass
-
-EMBED_MODEL = "minishlab/potion-multilingual-128M"  # static (model2vec) embeddings: fast on CPU, 100+ languages
 
 
 def pick(full, quick):
@@ -398,42 +389,3 @@ class DbtResult:
         pass
 
 
-# ---------------------------------------------------------------------------
-# Embeddings + LLM (Day 4)
-# ---------------------------------------------------------------------------
-
-_EMBEDDER = None
-
-
-def get_embedder(name: str = EMBED_MODEL):
-    global _EMBEDDER
-    if _EMBEDDER is None:
-        from model2vec import StaticModel
-
-        _EMBEDDER = StaticModel.from_pretrained(name)
-    return _EMBEDDER
-
-
-def embed(texts, normalize: bool = True):
-    import numpy as np
-
-    vecs = get_embedder().encode(list(texts))
-    if normalize:
-        vecs = vecs / np.clip(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9, None)
-    return vecs.astype("float32")
-
-
-def get_llm():
-    """OpenAI-compatible client from labs/.env, or None when no endpoint is configured."""
-    base, key, model = os.getenv("LLM_BASE_URL"), os.getenv("LLM_API_KEY"), os.getenv("LLM_MODEL")
-    if not (base and model):
-        return None
-    from openai import OpenAI
-
-    client = OpenAI(base_url=base, api_key=key or "none")
-
-    def chat(messages, **kw):
-        r = client.chat.completions.create(model=model, messages=messages, temperature=0, **kw)
-        return r.choices[0].message.content
-
-    return chat

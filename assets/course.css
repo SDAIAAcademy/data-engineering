@@ -25,19 +25,242 @@
 /* record cards and event chips used by the concept decks (rows that move through the pipeline) */
 .recs { display: flex; flex-wrap: wrap; gap: 10px; }
 .recs .rec { display: inline-grid; }
-.rec { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: baseline; background: #fff; border: 1.5px solid var(--line);
+.rec:not(.label) { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: baseline; background: #fff; border: 1.5px solid var(--line);
   border-radius: 10px; padding: 8px 14px; padding-inline-start: 20px; font-size: 20px; line-height: 1.3; box-shadow: inset 6px 0 0 var(--c, var(--navy)); }
-.rec b { font-family: var(--mono); font-weight: 600; color: var(--navy); font-size: 19px; }
-.rec span { color: var(--muted); font-size: 17px; grid-column: 1 / 3; }
-.rec i { font-style: normal; font-variant-numeric: tabular-nums; grid-column: 3; grid-row: 1 / 3; font-weight: 600; }
-.rec.bad { --c: var(--coral); background: color-mix(in srgb, var(--coral) 8%, #fff); }
-.rec.good { --c: var(--teal); }
-.rec.dim { opacity: .45; }
+.rec:not(.label) b { font-family: var(--mono); font-weight: 600; color: var(--navy); font-size: 19px; }
+.rec:not(.label) span { color: var(--muted); font-size: 17px; grid-column: 1 / 3; }
+.rec:not(.label) i { font-style: normal; font-variant-numeric: tabular-nums; grid-column: 3; grid-row: 1 / 3; font-weight: 600; }
+.rec.bad:not(.label) { --c: var(--coral); background: color-mix(in srgb, var(--coral) 8%, #fff); }
+.rec.good:not(.label) { --c: var(--teal); }
+.rec.dim:not(.label) { opacity: .45; }
 .evts { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
-.evt { background: #fff; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 18px; line-height: 1.25; min-width: 104px; text-align: center; }
-.evt b { display: block; font-family: var(--mono); font-size: 17px; color: var(--navy); }
-.evt span { display: block; color: var(--muted); font-size: 15px; }
-.evt small { display: block; font-family: var(--mono); font-size: 13px; color: var(--muted); }
-.evt.dim { opacity: .4; }
-.evt.bad { border-color: var(--coral); background: color-mix(in srgb, var(--coral) 8%, #fff); }
-.evt.ghost { border-style: dashed; color: var(--muted); }
+.evt:not(.label) { background: #fff; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 18px; line-height: 1.25; min-width: 104px; text-align: center; }
+.evt:not(.label) b { display: block; font-family: var(--mono); font-size: 17px; color: var(--navy); }
+.evt:not(.label) span { display: block; color: var(--muted); font-size: 15px; }
+.evt:not(.label) small { display: block; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.evt.dim:not(.label) { opacity: .4; }
+.evt.bad:not(.label) { border-color: var(--coral); background: color-mix(in srgb, var(--coral) 8%, #fff); }
+.evt.ghost:not(.label) { border-style: dashed; color: var(--muted); }
+
+/* the drawings: Qafila's hand-drawn figures and boards.
+   <div class="art warehouse"></div> is one drawing anywhere on a slide (give its parent a width).
+   <div class="board">…</div> is a 1440×510 drawing board: figures, labels, boxes, wires and cards placed by coordinates.
+   Pieces can carry class="frag". Add .s, .xs (scale) for a shorter board when the slide has more text. */
+.art { width: 100%; aspect-ratio: 1; background-image: url('img/architecture/whiteboard-atlas-cells.webp'); background-size: 300% 300%; background-repeat: no-repeat; }
+.art.db { background-position: 0 0 } .art.app { background-position: 50% 0 } .art.files { background-position: 100% 0 }
+.art.warehouse { background-position: 0 50% } .art.lake { background-position: 50% 50% } .art.house { background-position: 100% 50% }
+.art.analyst { background-position: 0 100% } .art.engineer { background-position: 50% 100% } .art.catalog { background-position: 100% 100% }
+.art.stakeholders, .art.scientist, .art.operations, .art.steward, .art.customer, .art.courier, .art.payment, .art.quality, .art.monitoring { background-image: url('img/architecture/story-figures-cells.webp'); }
+.art.stakeholders { background-position: 0 0 } .art.scientist { background-position: 50% 0 } .art.operations { background-position: 100% 0 }
+.art.steward { background-position: 0 50% } .art.customer { background-position: 50% 50% } .art.courier { background-position: 100% 50% }
+.art.payment { background-position: 0 100% } .art.quality { background-position: 50% 100% } .art.monitoring { background-position: 100% 100% }
+.art-row { display: flex; gap: 28px; align-items: center; }
+.art-row > .art, .art-side { width: 170px; flex: none; }
+.board { --hand: 'Segoe Print', 'Comic Sans MS', cursive; --sans: var(--font); position: relative; width: 1440px; height: 510px; margin: 6px auto 0; flex: none; color: #263544; font-size: 22px; }
+.board { zoom: .9; } .board.s { zoom: .78; } .board.xs { zoom: .66; }
+.board h3, .board p { margin: 0; color: inherit; }
+.board .figure { margin: 0; padding: 0; background: none; border: 0; box-shadow: none; }
+.board .wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.board .frag.wire, .board path.frag { transform: none; }
+.board .board { position:absolute!important;left:80px;top:237px;width:1440px;height:510px }
+.board .wire { fill:none;stroke:#61717c;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round }
+.board .wire.em { stroke:#348f8d;stroke-width:3 }
+.board .wire.danger { stroke:#c46558 }
+.board .wire.dashed { stroke-dasharray:7 8 }
+.board .enclosure { fill:#ffffff65;stroke:#8c9ca4;stroke-width:1.6;stroke-linejoin:round }
+.board .enclosure.teal { fill:#e0f2eb42;stroke:#70b5a9 }
+.board .enclosure.blue { fill:#e8f0fc42;stroke:#8faac6 }
+.board .enclosure.silver { fill:#eef1f455;stroke:#a0acb5 }
+.board .enclosure.frame { fill:none;stroke:#70b5a9;stroke-width:1.8;stroke-dasharray:9 8 }
+.board .figure { position:absolute;text-align:center }
+.board .figure figcaption { font-size:25px;font-weight:650;line-height:1.25;margin-top:7px }
+.board .detail { font-size:20px;color:#64727d;margin-top:5px;line-height:1.35 }
+/* Additional people and concepts share the original atlas's square-cell convention. */
+.board .label { position:absolute;font-size:22px;font-weight:600;line-height:1.35 }
+.board .label.hand { font-family:var(--hand);font-weight:500;font-size:25px }
+.board .muted { color:var(--muted) }
+.board .teal { color:#23817c }
+.board .red { color:#b96355 }
+.board .blue { color:#517eaf }
+.board .orange { color:#ac713b }
+.board .annotation { position:absolute;font:26px/1.4 var(--hand);color:#526773 }
+.board .annotation.teal { color:#21837f }
+.board .annotation.red { color:#b96251 }
+.board .tool-label { font-weight:400 }
+.board .tool-label strong { display:block;font:31px/1.25 var(--hand);color:#23817c;margin-bottom:5px }
+.board .tool-label span { display:block;font-size:21px;line-height:1.35;color:#526773 }
+.board .stage-box.compact { min-height:110px;padding:17px 12px }
+.board .stage-box.compact h3 { margin-bottom:10px }
+.board .stage-box.quarantine { border-color:#c58b80;background:#fbeee980 }
+.board .tool-label.inline strong, .board .tool-label.inline span { display:inline }
+.board .tool-label.inline strong { margin-right:14px }
+.board .label.reason { font-size:21px;font-weight:400;color:#526773 }
+.board .label.reason b { font-size:22px;font-weight:650;color:#23817c }
+.board .stage-box { position:absolute;min-height:200px;border:2px solid #91a9b9;border-radius:4px 8px 5px 3px;background:#e9f0fa6b;text-align:center;padding:20px 14px }
+.board .stage-box h3 { font:28px/1.25 var(--hand);margin-bottom:15px }
+.board .stage-box p { font-size:22px;line-height:1.5 }
+.board .stage-box.bronze { border-color:#bd9973;background:#f9ecda85 }
+.board .stage-box.silver { border-color:#a0acb5;background:#e9eef385 }
+.board .stage-box.gold { border-color:#c6ad5d;background:#fff2c985 }
+.board .stage-box .tag { display:block;font-size:18px;color:#74818a;margin-top:13px }
+.board .data-row { display:flex;justify-content:space-between;gap:15px;border-bottom:1px solid #b8c8c3;padding:9px 0;font:21px 'Cascadia Code',Consolas,monospace }
+.board .data-row.repeated { text-decoration:line-through;color:#ba7568 }
+.board .data-title { font-size:18px;color:#7e8c90;text-align:left;margin-bottom:8px }
+.board .number { font-size:68px;line-height:1.15;color:#338c83;font-weight:650 }
+.board .comparison { display:grid;grid-template-columns:repeat(3,1fr);gap:60px;position:absolute;left:0;right:0;top:0 }
+.board .compare-col { position:relative;text-align:center }
+.board .compare-col .art { width:200px;margin:0 auto }
+.board .compare-col h3 { font:31px var(--hand);margin:9px 0 20px }
+.board .compare-col p { font-size:24px;line-height:1.4;max-width:345px;margin:auto }
+.board .compare-col .fine { font-size:21px;color:#74808a;margin-top:17px }
+.board .compare-col+.compare-col::before { content:'';position:absolute;left:-30px;top:45px;bottom:0;border-left:1.5px dashed #c8d2d1 }
+.board .annotation.center { text-align:center;font-size:24px;line-height:1.25 }
+.board .data-title { display:flex;justify-content:space-between }
+.board .mapping { position:absolute;left:0;top:0;width:100%;border-collapse:collapse;font-size:23px;line-height:1.35 }
+.board .mapping th { font-size:17px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;padding:0 18px 12px;border-bottom:2px solid #91a9b9 }
+.board .mapping td { padding:20px 18px;border-bottom:1px solid #c9d3d6;vertical-align:middle }
+.board .mapping td.zone { font:30px var(--hand) }
+.board .mapping tr.bronze td.zone { color:#9a6b3c }
+.board .mapping tr.silver td.zone { color:#66788a }
+.board .mapping tr.gold td.zone { color:#93771a }
+.board .mapping tr.bronze { background:#f9ecda55 }
+.board .mapping tr.silver { background:#e9eef355 }
+.board .mapping tr.gold { background:#fff2c955 }
+.board .mapping code, .board .trap code { font:20px 'Cascadia Code',Consolas,monospace;color:#2f5a6a }
+.board .trap { position:absolute;left:0;right:0;top:352px;font-size:23px;line-height:1.4;padding:16px 22px;border-left:5px solid #c46558;background:#fbeee955 }
+/* Event records on a log (D3_3, D3_4): one card per event, coloured by event type. */
+.board .label.evt { height:70px;padding-top:8px;text-align:center;border:2px solid #91a9b9;border-radius:4px 8px 5px 3px;background:#fff;font-weight:400 }
+.board .evt b { display:block;font:20px/1.2 'Cascadia Code',Consolas,monospace }
+.board .evt span { display:block;font-size:16px;color:#526773;margin-top:5px }
+.board .evt.assigned { border-color:#8faac6;background:#e8f0fc }
+.board .evt.picked { border-color:#c6ad5d;background:#fff2c9 }
+.board .evt.way { border-color:#bd9973;background:#f9ecda }
+.board .evt.delivered { border-color:#70b5a9;background:#e0f2eb }
+.board .evt.failed { border-color:#c46558;background:#fbeee9 }
+.board .evt.dim { opacity:.4 }
+.board .evt.ghost { border:2px dashed #b8c8c3;background:none;color:#8a979c }
+.board .evt.dup, .board .evt.twice { border:2.4px dashed #c46558;background:#fbeee9 }
+.board .evt.lost { opacity:.4;border-style:dashed }
+.board .evt.lost b, .board .evt.lost span { text-decoration:line-through }
+.board .label.off, .board .label.tick { font:17px 'Cascadia Code',Consolas,monospace;color:var(--muted);text-align:center;font-weight:400 }
+.board .label.ptr { font-size:18px;font-weight:650;text-align:center }
+.board .ptr.sla { color:#23817c }
+.board .ptr.fraud { color:#ac713b }
+.board .ptr.saved { color:#517eaf }
+.board .label.count { text-align:center;font-size:21px;font-weight:400;color:#526773 }
+.board .label.count b { font:30px var(--hand);color:var(--ink) }
+.board .label.count.closed b { color:#23817c }
+.board .wire.thin { stroke-width:1.5;stroke:#8d9ba3 }
+.board .wire.axis { stroke-width:2;stroke:#61717c }
+.board .enclosure.closed { fill:#e0f2eb80;stroke:#70b5a9 }
+.board .label.chip { background:var(--paper);border-radius:4px }
+.board .mapping.compact td { padding:11px 18px }
+/* Rows of a dimensional model (D2_2): order and line cards, fee chips, small tables. */
+.board .label.rec { min-height:70px;padding:8px 14px;border:2px solid #91a9b9;border-radius:4px 8px 5px 3px;background:#fff;font-weight:400 }
+.board .label.rec:has(i) { padding-right:112px }
+.board .rec b { display:block;font:19px/1.25 'Cascadia Code',Consolas,monospace }
+.board .rec span { display:block;font-size:17px;line-height:1.3;color:#526773;margin-top:5px }
+.board .rec i { position:absolute;right:14px;top:50%;transform:translateY(-50%);font:600 23px 'Cascadia Code',Consolas,monospace;font-style:normal;color:#23817c }
+.board .rec.order { border-color:#8faac6;background:#e8f0fc }
+.board .rec.line { border-color:#70b5a9;background:#f3faf6 }
+.board .rec.day { border-color:#c6ad5d;background:#fff6d8 }
+.board .rec.lost { opacity:.5;border-style:dashed }
+.board .rec.lost b, .board .rec.lost i { text-decoration:line-through }
+.board .label.fee { height:36px;padding-top:4px;text-align:center;border:2px solid #bd9973;border-radius:4px 8px 5px 3px;background:#f9ecda;font:600 18px 'Cascadia Code',Consolas,monospace;color:#8a5a2c }
+.board .label.fee.dup { border:2.4px dashed #c46558;background:#fbeee9;color:#b14f43 }
+.board .label.tbl { padding:8px 16px 6px;border:2px solid #91a9b9;border-radius:4px 8px 5px 3px;background:#fffffff0;font-weight:400 }
+.board .tbl.gold { border-color:#c6ad5d;background:#fffaf0 }
+.board .tbl.faint { opacity:.3 }
+.board .tbl .t-title { font:26px/1.3 var(--hand);margin-bottom:4px }
+.board .tbl .t-row { display:grid;gap:14px;border-top:1px solid #c9d3d6;padding:4px 0;font-size:17px;line-height:1.35 }
+.board .tbl .t-row>span:first-child, .board .tbl.mono .t-row>span { font-family:'Cascadia Code',Consolas,monospace }
+.board .tbl.sums .t-row>span:first-child { font-family:var(--sans) }
+.board .tbl.sums .t-row>span:last-child { font-family:'Cascadia Code',Consolas,monospace;text-align:right }
+.board .tbl .t-row.h { font:600 13px var(--sans)!important;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-top:0 }
+.board .tbl .t-row.h>span { font:inherit }
+.board .tbl .t-title .src { font:16px var(--sans);color:var(--muted);margin-left:14px }
+.board .tbl em.k { font-style:normal;font-weight:600;color:#1b6f68;background:#cdeee2;border-radius:3px;padding:0 4px;margin:0 -4px }
+.board .tbl .t-row.more { color:var(--muted);font-style:italic }
+.board .tbl .t-row.more>span { font-family:var(--sans) }
+.board .tbl .t-row.hit { background:#e0f2eb }
+.board .tbl .t-row.unk { background:#fbeee9 }
+.board .label.answer { font-size:20px;font-weight:400;color:#526773 }
+.board .label.answer b { display:block;font:34px/1.25 var(--hand);color:var(--ink) }
+.board .label.sum { text-align:right;padding-right:16px;font-size:20px;font-weight:400;color:#526773 }
+.board .label.sum b { font:600 26px 'Cascadia Code',Consolas,monospace;color:#23817c }
+.board .label.code { font:19px/1.4 'Cascadia Code',Consolas,monospace;color:#2f5a6a }
+.board .label.caption { font-size:17px;font-weight:400;color:var(--muted) }
+.board .label.check { font-size:22px;font-weight:400 }
+.board .label.check b { color:#23817c }
+.board .label.check b.warn { color:#ac713b }
+/* Recall boards (every deck): a question, then an empty answer that the next slide fills in. */
+.board .label.recall-q { min-height:86px;padding-left:56px;font-size:23px;font-weight:400;line-height:1.35 }
+.board .recall-q b { position:absolute;left:0;top:-6px;font:36px var(--hand);color:#23817c }
+.board .label.recall-a { min-height:76px;padding:10px 18px;border:2px dashed #b8c8c3;border-radius:4px 8px 5px 3px;font:34px/1.6 var(--hand);color:#9aa7ab;text-align:center }
+.board .label.recall-a.shown { border:2px solid #70b5a9;background:#e0f2eb;color:var(--ink);font:19px/1.4 var(--sans);text-align:left }
+/* Rows of a change feed (D1_4): the app's row, our copy, change events, and rows that were overwritten or are wrong. */
+.board .rec.src { border-color:#8faac6;background:#e8f0fc }
+.board .rec.copy { border-color:#70b5a9;background:#f3faf6 }
+.board .rec.chg { border-color:#c6ad5d;background:#fff6d8 }
+.board .rec.dup { border:2.4px dashed #c46558;background:#fbeee9 }
+.board .rec.wrong { border-color:#c46558;background:#fbeee9 }
+.board .rec.gone, .board .rec.stale { opacity:.5;border-style:dashed }
+.board .rec.gone span { text-decoration:line-through }
+/* The course introduction (00_intro): centred number labels, slim cards and the day boxes with their team figures. */
+.board .label.center { text-align:center }
+.board .label.rec.slim { min-height:56px;padding-top:14px }
+.board .stage-box.day { min-height:320px }
+.board .stage-box.day h3 { font-size:25px }
+.board .day-art { width:110px;margin:10px auto 0 }
+/* 00_story: the lake as folders of files, and a rewrite drawn on a timeline. */
+.board .label.tree { font:400 17px/1.4 'Cascadia Code',Consolas,monospace;color:#33424f }
+.board .tree .dir { color:#6d8a93 }
+.board .label.tl-bar { height:46px;padding:8px 0;border:2px solid #70b5a9;border-radius:4px 8px 5px 3px;background:#e0f2eb;padding-left:18px;font-weight:500;color:#23817c }
+.board .label.tl-axis { height:0;border-top:2px solid #8c9ca4 }
+.board .label.tl-tick { text-align:center;font:600 17px/1.3 'Cascadia Code',Consolas,monospace;color:#526773 }
+.board .tl-tick span { display:block;font:400 16px var(--sans);color:var(--muted) }
+.board .label.tl-now { height:118px;border-left:3px dashed #8c9ca4 }
+.board .label.tl-now.read { border-left-color:#c46558 }
+.board .label.tl-zone { font-size:18px;font-weight:500;line-height:1.3;color:#23817c;text-align:center }
+.board em.k.bad { color:#a4473b;background:#f6dcd6 }
+.board .t-row.total { border-top:2px solid #9fb3ad;font-weight:600 }
+.board .tbl em.o, .board .o-key { font-style:normal;font-weight:600;color:#2f5d8c;background:#dde8f8;border-radius:3px;padding:0 4px;margin:0 -4px }
+.board .o-key, .board .k-key { margin:0 }
+.board .k-key { font-weight:600;color:#1b6f68;background:#cdeee2;border-radius:3px;padding:0 4px }
+.board .tbl.prose .t-row>span { font-family:var(--sans) }
+/* Streams into the lakehouse (D3_4): one bar per store, a share out of 100%. */
+.board .label.bar { display:grid;grid-template-columns:110px 1fr 70px;align-items:center;gap:16px;height:32px;font-weight:400 }
+.board .bar b { font:600 18px 'Cascadia Code',Consolas,monospace }
+.board .bar i { font:600 19px 'Cascadia Code',Consolas,monospace;font-style:normal;text-align:right }
+.board .bar .track { display:block;height:18px;border-bottom:1px solid #c9d3d6 }
+.board .bar .track span { display:block;height:100%;background:#9fcbc1;border-radius:0 4px 4px 0 }
+.board .bar.mine .track span { background:#348f8d }
+.board .bar.bad .track span { background:#c46558 }
+.board .bar.bad b, .board .bar.bad i { color:#a4473b }
+.board .label.files { display:flex;gap:2px;height:44px }
+.board .files span { flex:none;width:12px;height:44px;border:1.5px solid #8faac6;border-radius:2px;background:#e8f0fc }
+.board .files span.k { border-color:#348f8d;background:#348f8d }
+.board .files.one span { border-color:#70b5a9;background:#e0f2eb }
+/* D1_1 storage: one value per cell, so a value glides from a row layout to a column layout. */
+.board .label.cell { height:38px;padding:0 4px;border:1.5px solid #91a9b9;border-radius:3px;background:#fff;font:400 15px/35px 'Cascadia Code',Consolas,monospace;text-align:center;white-space:nowrap }
+.board .cell.r { border-color:#348f8d;background:#cdeee2;font-weight:600 }
+.board .cell.x { opacity:.28 }
+.board .cell.w { border-color:#c46558;background:#fbeee9 }
+.board .label.cell.n { border:0;background:none;font:600 13px/35px var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);text-align:left }
+.board .label.cell.n.r { color:#1b6f68 }
+.board .bar.wide { grid-template-columns:190px 1fr 110px }
+.board .files.wrap { flex-wrap:wrap;height:auto }
+.board .files.wrap span { width:8px;height:15px;border-width:1px }
+.board .tree .hit { background:#e0f2eb;color:#1b6f68;font-weight:600;border-radius:3px }
+.board .cell.n small { margin-left:8px;font:400 12px var(--sans);letter-spacing:0;text-transform:none;color:#23817c }
+.board .cell.n.x small { color:inherit }
+/* D1_1 part 2: a whole column of a Parquet file as one strip, cut into row groups, with the footer at the end. */
+.board .label.strip { height:34px;border:1.5px solid #91a9b9;border-radius:3px;background:#fff }
+.board .label.foot { height:264px;display:flex;align-items:center;justify-content:center;border:2px solid #348f8d;border-radius:4px 8px 5px 3px;background:#e0f2eb;color:#1b6f68;font:600 18px var(--sans) }
+.board .label.right { text-align:right }
+/* D4_2 contracts and monitors: one column per day of orders, a dot over each day a monitor alerts on. */
+.board .label.vcol span { display:block;background:#9fcbc1;border-radius:2px 2px 0 0 }
+.board .vcol.peak span { background:#d9c27e }
+.board .vcol.bad span { background:#c46558 }
+.board .vcol.cal span { background:#8faac6 }
+.board .label.vmark { height:13px;border-radius:50%;background:#c46558;box-shadow:0 0 0 3px #fbeee9 }
