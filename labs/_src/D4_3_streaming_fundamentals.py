@@ -1,21 +1,19 @@
 # %% [markdown]
-# # Lab 3.3 · Streaming fundamentals: logs, offsets, windows, watermarks
+# # Lab 4.3 · Streaming: a log, a crash and a watermark
 #
-# Day 3 · Session 3 (Streaming fundamentals) · 25 min. Kafka and Flink are big systems; the ideas underneath are small.
-# In this lab you build them in plain Python, on a week of Qafila **courier events** (Sep 24-30):
-# - a **partitioned, append-only log** (a tiny Kafka topic) and **consumer offsets**;
-# - what "at-least-once" really means after a crash, and how **idempotent** processing fixes it;
-# - **event time vs processing time**, and how late events really are;
-# - **tumbling windows** closed by a **watermark**: the latency vs completeness trade-off, measured;
-# - **replay**: recomputing everything from the log.
+# Day 4 · Session 3 · 25 min. Kafka and Flink are big systems, but the ideas underneath are small. You'll build them in
+# plain Python on a week of Qafila **courier events**:
+# - a log with offsets, and what a crash does to a count;
+# - counting that survives crashes and repeats;
+# - windows closed by a watermark, with the trade-off measured.
 #
 # **Tasks**
-# - [ ] 1 · Produce the events into a 4-partition log, keyed by order (5')
-# - [ ] 2 · Consume with offsets; crash; make processing idempotent (6')
-# - [ ] 3 · Event time vs processing time (5')
-# - [ ] 4 · Windows and watermarks: measure the trade-off (7')
-# - [ ] 5 · Replay from offset 0 (2')
-# - [ ] ✱ Stretch · Exactly-once: commit results and offsets in one transaction
+# - [ ] 1 · Write the events into a log with offsets (4')
+# - [ ] 2 · Consume, crash and count too many (5')
+# - [ ] 3 · Make the count idempotent (6')
+# - [ ] 4 · Event time vs. processing time (4')
+# - [ ] 5 · Windows and a watermark: measure the trade-off (6')
+# - [ ] ✱ Stretch · Replay the log from offset 0 with a new reader
 
 # %%
 import os, sys, subprocess
@@ -45,15 +43,18 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+import de_viz as V
+
 events = [json.loads(line) for line in open(U.RAW / "events" / "delivery_events.jsonl", encoding="utf-8")]
-print(f"{len(events):,} events, in arrival order")
-pd.DataFrame(events[:4])
+print(f"{len(events):,} events, in the order they arrived")
+pd.DataFrame(events[:4])[["event_id", "order_id", "event_type", "event_time", "ingest_time"]]
 
 # %% [markdown]
-# ## 1 · Produce the events into a 4-partition log, keyed by order (5')
+# ## 1 · Write the events into a log with offsets (4')
 #
-# A Kafka **topic** is split into **partitions**; each partition is an append-only list where a record's position is its
-# **offset**. The producer picks the partition by hashing the record **key**. Here's the whole idea in 15 lines:
+# A **log** is an ordered list you only add to. A record's position is its **offset**. Kafka calls a log a **topic**, and
+# splits it into **partitions** so several readers can share the work. The record's **key** picks the partition: same key,
+# same partition, so an order's events stay in order. That's the whole idea, in a few lines. Run it.
 
 # %%
 class Log:
@@ -62,11 +63,8 @@ class Log:
     def __init__(self, partitions: int = 4):
         self.parts = [[] for _ in range(partitions)]
 
-    def partition_for(self, key) -> int:
-        return zlib.crc32(str(key).encode()) % len(self.parts)
-
     def produce(self, key, value) -> tuple[int, int]:
-        p = self.partition_for(key)
+        p = zlib.crc32(str(key).encode()) % len(self.parts)
         self.parts[p].append((key, value))
         return p, len(self.parts[p]) - 1          # (partition, offset)
 
@@ -76,40 +74,31 @@ class Log:
     def end_offsets(self) -> list[int]:
         return [len(p) for p in self.parts]
 
-# %% [markdown]
-# ✏️ **Exercise** · Create `log = Log(4)` and produce every event, **keyed by `order_id`**, in arrival order. Then build
-# `per_partition` = the number of records in each partition.
 
-# %%
-# BEGIN SOLUTION
 log = Log(4)
 for e in events:
     log.produce(e["order_id"], e)
-per_partition = log.end_offsets()
-# END SOLUTION
-print("records per partition:", per_partition)
+print("records per partition:", log.end_offsets())
 
-# %%
-order_parts = defaultdict(set)
-for p, part in enumerate(log.parts):
-    for key, _ in part:
-        order_parts[key].add(p)
-U.check(sum(per_partition) == len(events), "every event is in the log")
-U.check(all(len(ps) == 1 for ps in order_parts.values()), "all events of an order land in the same partition")
+khalid = [(p, off, v["event_type"]) for p, part in enumerate(log.parts) for off, (k, v) in enumerate(part) if k == 5043883]
+print("Khalid's order 5043883 (partition, offset, step):")
+for row in khalid:
+    print("  ", row)
 
 # %% [markdown]
-# 🔍 Ordering is guaranteed **per partition**, not across the topic. Keying by `order_id` keeps each order's
-# `assigned → picked_up → delivered` in order, while the 4 partitions can be consumed in parallel by 4 consumers.
-# Choose keys for the ordering you need; a hot key (one huge store?) makes one partition hot.
+# 🔍 Khalid's four events sit in one partition, in order, even though other orders are mixed in between. Would that be true
+# if we spread events evenly with no key?
 #
-# ## 2 · Consume with offsets; crash; make processing idempotent (6')
+# ## 2 · Consume, crash and count too many (5')
 #
-# A consumer reads from each partition starting at its **committed offset**, processes a batch, then commits the new
-# offsets. Kafka stores them per **consumer group**. The job: count **delivered** orders per city.
+# A **consumer** reads from its saved offsets, does its work, then saves the new offsets (a **commit**). Reading deletes
+# nothing, and each reader keeps its own place. The job: count **delivered** events per city.
+#
+# This consumer saves *after* the work. It crashes once between the two. Run the cells.
 
 # %%
 class Consumer:
-    """One consumer of a group, reading every partition; offsets live in `store[group]` until committed."""
+    """Reads every partition from its saved offsets; offsets live in `store[group]` until committed."""
 
     def __init__(self, log: Log, group: str, store: dict):
         self.log, self.group, self.store = log, group, store
@@ -119,7 +108,7 @@ class Consumer:
         batch = []
         for p in range(len(self.log.parts)):
             recs = self.log.read(p, self.position[p], max_records // len(self.log.parts))
-            batch += [(p, self.position[p] + i, k, v) for i, (k, v) in enumerate(recs)]
+            batch += [v for _, v in recs]
             self.position[p] += len(recs)
         return batch
 
@@ -128,115 +117,139 @@ class Consumer:
 
 
 truth = Counter()
-for e in {e["event_id"]: e for e in events}.values():           # deduplicated, the "right answer"
+for e in {e["event_id"]: e for e in events}.values():           # each event once: the right answer
     if e["event_type"] == "delivered":
         truth[e["city"]] += 1
-print("truth:", dict(truth))
-
-# %% [markdown]
-# A naive consumer that **crashes once** between processing a batch and committing it, then restarts:
+print("right answer:", dict(truth), "| total:", sum(truth.values()))
 
 # %%
-def run_naive(crash_at_batch: int | None = 10):
+def run_naive(crash_at_batch=10):
     store, counts, batches = {}, Counter(), 0
     c = Consumer(log, "naive", store)
     while batch := c.poll():
-        for _, _, _, e in batch:
+        for e in batch:
             if e["event_type"] == "delivered":
                 counts[e["city"]] += 1
         batches += 1
-        if batches == crash_at_batch:                       # 💥 crash before commit: restart from committed offsets
-            c = Consumer(log, "naive", store)
+        if batches == crash_at_batch:                       # 💥 crash before the commit
+            c = Consumer(log, "naive", store)               # restart from the saved offsets
             crash_at_batch = None
             continue
         c.commit()
     return counts
 
 naive = run_naive()
-print("naive:", dict(naive), "| over-count:", sum(naive.values()) - sum(truth.values()))
+repeats = len(events) - len({e["event_id"] for e in events})
+print(f"naive count: {sum(naive.values()):,} | too many by: {sum(naive.values()) - sum(truth.values())}")
+print(f"repeated events in the log, sent twice by phones: {repeats}")
 
 # %% [markdown]
-# 🔍 Two sources of double counting: the batch replayed after the crash (**at-least-once** delivery), and the producer's own
-# duplicates (phones retrying, 312 of them). Exactly-once delivery across a network is (practically) impossible; what you
-# build instead is **idempotent processing**: applying the same record twice has the same effect as once.
+# 🔍 Two causes, one symptom. The batch was re-read after the crash (**at-least-once**: nothing is lost, some things repeat),
+# and the phones also retried when the network dropped. If the consumer saved *before* the work, what would a crash do instead?
 #
-# ✏️ **Exercise** · Write `run_idempotent(crash_at_batch=10)`: same loop and crash, but count each **`event_id`** once
-# (keep a set of seen ids in the consumer's state). Store the result in `idem`.
+# ## 3 · Make the count idempotent (6')
+#
+# You can't stop repeats arriving. You can make them harmless. **Idempotent** means doing it twice has the same effect as doing
+# it once. Every event carries an `event_id`, so remember which ones you've counted.
+#
+# ✏️ **Exercise 1** · Fill in `count_once(e, counts, seen)`: if `e["event_id"]` is already in `seen`, do nothing. Otherwise add
+# it to `seen`, and if the event is `delivered`, add 1 to `counts[e["city"]]`.
+#
+# *Hint:* `if e["event_id"] in seen: return` is the first line. Four lines in all.
 
 # %%
-# BEGIN SOLUTION
-def run_idempotent(crash_at_batch: int | None = 10):
+def count_once(e, counts, seen):
+    # BEGIN SOLUTION
+    if e["event_id"] in seen:
+        return
+    seen.add(e["event_id"])
+    if e["event_type"] == "delivered":
+        counts[e["city"]] += 1
+    # END SOLUTION
+
+def run_idempotent(crash_at_batch=10, group="idempotent"):
     store, counts, seen, batches = {}, Counter(), set(), 0
-    c = Consumer(log, "idempotent", store)
+    c = Consumer(log, group, store)
     while batch := c.poll():
-        for _, _, _, e in batch:
-            if e["event_id"] in seen:
-                continue
-            seen.add(e["event_id"])
-            if e["event_type"] == "delivered":
-                counts[e["city"]] += 1
+        for e in batch:
+            count_once(e, counts, seen)
         batches += 1
-        if batches == crash_at_batch:
-            c = Consumer(log, "idempotent", store)
+        if batches == crash_at_batch:                       # 💥 same crash as before
+            c = Consumer(log, group, store)
             crash_at_batch = None
             continue
         c.commit()
     return counts
 
-idem = run_idempotent()
-# END SOLUTION
-print("idempotent:", dict(idem))
-U.check(idem == truth, "crash + duplicates, still exactly the right counts")
+# %%
+try:
+    idem = run_idempotent()
+except NotImplementedError:
+    print(f"⏭️ Exercise 1 not done yet. Expected: {sum(truth.values()):,} delivered, equal to the right answer. Using the reference.")
+    def count_once(e, counts, seen):
+        if e["event_id"] not in seen:
+            seen.add(e["event_id"])
+            if e["event_type"] == "delivered":
+                counts[e["city"]] += 1
+    idem = run_idempotent()
+print(f"idempotent count: {sum(idem.values()):,}")
+U.check(idem == truth, "a crash and the phones' repeats, and still exactly the right counts")
 
 # %% [markdown]
-# 🔍 In production the "seen" set lives in the **sink**: a `MERGE` keyed by `event_id` (Lab 1.4), an upsert into Iceberg
-# (Lab 3.4), or Flink's keyed state with a TTL. "Exactly-once" in Kafka/Flink marketing means **effectively-once**:
-# at-least-once delivery + idempotent or transactional writes.
+# 🔍 In a real job the "seen" memory lives in the output: a `MERGE` on `event_id` (Lab 2.3 did this for customers) does the same
+# job as this set. When someone says "exactly-once", they usually mean this: at-least-once delivery plus an idempotent output.
 #
-# ## 3 · Event time vs processing time (5')
+# ## 4 · Event time vs. processing time (4')
 #
-# Each event has two clocks: `event_time` (when it happened, on the courier's phone) and `ingest_time` (when the platform
-# received it). And the phone app writes `event_time` in **three formats** (two app versions in the field...).
+# Every event has two clocks. **Event time** is when it happened, on the courier's phone. **Processing time** is when the platform
+# received it (`ingest_time` here). And two app versions write the event time in three formats. The parser is done for you.
+#
+# ✏️ **Exercise 2** · Write `lateness_seconds(e)`: `e["arrived"]` minus `e["ts"]`, in seconds.
+#
+# *Hint:* subtracting two datetimes gives a timedelta, and a timedelta has `.total_seconds()`. One line.
 
 # %%
-print(Counter(("epoch-ms" if e["event_time"].isdigit() else e["event_time"][-6:] if "+" in e["event_time"] else "Z")
-              for e in events))
-
-# %% [markdown]
-# ✏️ **Exercise** · Write `parse_event_time(s) -> datetime` (UTC, timezone-aware) for all three formats. Then compute
-# `lateness` = a pandas Series of `ingest_time − event_time` in **seconds** for every event.
-
-# %%
-def parse_ingest(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
-
-# BEGIN SOLUTION
 def parse_event_time(s: str) -> datetime:
-    if s.isdigit():
+    if s.isdigit():                                                      # epoch milliseconds
         return datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc)
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)   # ...+03:00 or ...Z
 
-lateness = pd.Series([(parse_ingest(e["ingest_time"]) - parse_event_time(e["event_time"])).total_seconds() for e in events])
-# END SOLUTION
 for e in events:
-    e["ts"], e["arrived"] = parse_event_time(e["event_time"]), parse_ingest(e["ingest_time"])
-print(lateness.describe(percentiles=[0.5, 0.9, 0.99, 0.999]).round(1))
+    e["ts"], e["arrived"] = parse_event_time(e["event_time"]), parse_event_time(e["ingest_time"])
+
+print(Counter("epoch millis" if e["event_time"].isdigit() else "+03:00" if "+" in e["event_time"] else "Z (UTC)" for e in events))
+
+def lateness_seconds(e):
+    # BEGIN SOLUTION
+    return (e["arrived"] - e["ts"]).total_seconds()
+    # END SOLUTION
 
 # %%
-U.check(parse_event_time("1790000000000") == datetime(2026, 9, 21, 14, 13, 20, tzinfo=timezone.utc), "epoch millis")
-U.check(parse_event_time("2026-09-24T05:14:52.016+03:00") == parse_event_time("2026-09-24T02:14:52.016Z"), "same instant, two formats")
-U.check(lateness.min() >= 0 and lateness.max() > 30 * 60, "nothing arrives before it happens; some events are >30 min late")
+try:
+    lateness = pd.Series([lateness_seconds(e) for e in events])
+except NotImplementedError:
+    print("⏭️ Exercise 2 not done yet. Expected: half under 5 s, the slowest near 50 minutes. Using the reference.")
+    lateness = pd.Series([(e["arrived"] - e["ts"]).total_seconds() for e in events])
+print(lateness.describe(percentiles=[0.5, 0.9, 0.99, 0.999]).round(1).to_string())
+U.check(lateness.min() >= 0 and lateness.max() > 30 * 60, "nothing arrives before it happens; some events are over 30 minutes late")
 
 # %% [markdown]
-# 🔍 Most events arrive within seconds; a long tail (couriers' phones offline in a basement car park) arrives up to
-# ~50 minutes late. Any "per 15 minutes" metric must decide **which clock** to use, and **how long to wait** for stragglers.
+# 🔍 Most events arrive within seconds, and a long tail arrives very late (a phone offline in a car park). "Deliveries between
+# 13:00 and 13:15" means **event time**, or a replay tomorrow would give a different answer. But then: when is 13:00–13:15 finished?
 #
-# ## 4 · Windows and watermarks: measure the trade-off (7')
+# ## 5 · Windows and a watermark: measure the trade-off (6')
 #
-# Metric: **delivered orders per city per 15-minute window** (by event time). A streaming engine keeps one open window per
-# (city, window start) and must decide when a window is **final**. It uses a **watermark**: "I believe I have seen
-# everything up to time W", here W = (max event time seen) − (allowed lateness). When W passes a window's end, the window
-# is emitted and its state dropped; events for an already-emitted window are **late** and dropped.
+# A **window** is a slice of event time that a count is grouped by. Here: delivered orders per city per 15 minutes.
+# A **watermark** is the engine's guess at "I've seen everything before W":
+#
+# W = newest event time seen − allowed lateness
+#
+# When W passes a window's end, the window is published. An event for an already-published window is **late** and gets dropped.
+#
+# ✏️ **Exercise 3** · The loop is written. Fill in the two rules: `wm` is the watermark, and `is_late` is true when the event's
+# window ends at or before `wm`.
+#
+# *Hint:* `wm = max_ts - allowed_lateness`, and the window ends at `key[1] + WINDOW`. Two lines.
 
 # %%
 WINDOW = timedelta(minutes=15)
@@ -244,144 +257,104 @@ WINDOW = timedelta(minutes=15)
 def window_start(ts: datetime) -> datetime:
     return ts - timedelta(minutes=ts.minute % 15, seconds=ts.second, microseconds=ts.microsecond)
 
-batch_truth = defaultdict(set)
-for e in events:
-    if e["event_type"] == "delivered":
-        batch_truth[(e["city"], window_start(e["ts"]))].add(e["order_id"])
-batch_truth = {k: len(v) for k, v in batch_truth.items()}
-print(len(batch_truth), "non-empty (city, window) cells")
+def watermark_rules(max_ts, key, allowed_lateness):
+    # BEGIN SOLUTION
+    wm = max_ts - allowed_lateness
+    is_late = key[1] + WINDOW <= wm
+    # END SOLUTION
+    return wm, is_late
 
-# %% [markdown]
-# ✏️ **Exercise** · Complete `stream_windows(stream, allowed_lateness)`. For each event (in arrival order):
-# 1. advance `max_ts` and compute the watermark `wm = max_ts − allowed_lateness`;
-# 2. if the event's window **end** ≤ the last emitted watermark → it's late: `dropped += 1`, skip it;
-# 3. otherwise add its `order_id` to `state[(city, window_start)]` (a set: duplicates are harmless);
-# 4. emit (move to `emitted`) every open window whose end ≤ `wm`, recording the emit **delay** = `e["arrived"] − window end`.
-#
-# Only `delivered` events matter.
-
-# %%
 def stream_windows(stream, allowed_lateness: timedelta):
-    state, emitted, delays = {}, {}, []
-    max_ts, wm, dropped = datetime.min.replace(tzinfo=timezone.utc), datetime.min.replace(tzinfo=timezone.utc), 0
+    state, emitted, delays, dropped = {}, {}, [], 0
+    max_ts = datetime.min.replace(tzinfo=timezone.utc)
     for e in stream:
         if e["event_type"] != "delivered":
             continue
-        # BEGIN SOLUTION
         max_ts = max(max_ts, e["ts"])
-        wm = max_ts - allowed_lateness
         key = (e["city"], window_start(e["ts"]))
-        if key[1] + WINDOW <= wm:
+        wm, is_late = watermark_rules(max_ts, key, allowed_lateness)
+        if is_late:
             dropped += 1
             continue
-        state.setdefault(key, set()).add(e["order_id"])
-        for k in [k for k in state if k[1] + WINDOW <= wm]:
+        state.setdefault(key, set()).add(e["order_id"])     # a set: repeats are harmless
+        for k in [k for k in state if k[1] + WINDOW <= wm]:  # publish every finished window
             emitted[k] = len(state.pop(k))
             delays.append((e["arrived"] - (k[1] + WINDOW)).total_seconds())
-        # END SOLUTION
-    for k, v in state.items():          # end of stream: flush what's left
+    for k, v in state.items():                              # end of the data: publish what's left
         emitted[k] = len(v)
     return emitted, dropped, delays
 
 # %%
+try:
+    stream_windows(events[:50], timedelta(minutes=2))
+except NotImplementedError:
+    print("⏭️ Exercise 3 not done yet. Expected: more lateness, fewer drops, later results. Using the reference.")
+    def watermark_rules(max_ts, key, allowed_lateness):
+        wm = max_ts - allowed_lateness
+        return wm, key[1] + WINDOW <= wm
+
+exact = defaultdict(set)                                    # the right answer, counted with all the data in hand
+for e in events:
+    if e["event_type"] == "delivered":
+        exact[(e["city"], window_start(e["ts"]))].add(e["order_id"])
+exact = {k: len(v) for k, v in exact.items()}
+
 rows = []
 for minutes in [0, 2, 10, 30, 60]:
     out, dropped, delays = stream_windows(events, timedelta(minutes=minutes))
-    exact = sum(out.get(k) == v for k, v in batch_truth.items()) / len(batch_truth)
-    rows.append({"allowed_lateness_min": minutes, "late_events_dropped": dropped, "windows_exactly_right": f"{exact:.1%}",
-                 "median_emit_delay_min": round(pd.Series(delays).median() / 60, 1)})
+    right = sum(out.get(k) == v for k, v in exact.items()) / len(exact)
+    rows.append({"allowed_lateness_min": minutes, "late_events_dropped": dropped, "windows_exactly_right": f"{right:.1%}",
+                 "median_wait_for_result_min": round(pd.Series(delays).median() / 60, 1)})
 tradeoff = pd.DataFrame(rows)
+U.check(tradeoff.late_events_dropped.is_monotonic_decreasing, "waiting longer drops fewer late events")
+U.check(tradeoff.median_wait_for_result_min.is_monotonic_increasing, "...but results arrive later")
 tradeoff
 
-# %%
-U.check(tradeoff.late_events_dropped.is_monotonic_decreasing, "waiting longer drops fewer late events")
-U.check(tradeoff.median_emit_delay_min.is_monotonic_increasing, "...but results arrive later")
-U.check(tradeoff.late_events_dropped.iloc[-1] == 0, "with 60 minutes of patience, nothing is dropped")
-
 # %% [markdown]
-# 🔍 There's no free lunch: **latency vs completeness** is a business decision. A live ops dashboard might wait 2 minutes and
-# accept that ~1 window in 10 is slightly low; finance wants the complete numbers and can wait (or recompute in batch tonight). Engines add escape
-# hatches: Flink's **allowed lateness** re-emits a window as an update; Spark Structured Streaming's `withWatermark` drops
-# state after the threshold; Kafka Streams has **grace periods**.
-#
-# ## 5 · Replay from offset 0 (2')
-#
-# The log is **retained**, not deleted on read. A new consumer group starting at offset 0 recomputes everything: that's how
-# you fix a bug in a streaming job, backfill a new metric, or bootstrap a new downstream system.
+# Here it is drawn: one busy hour, when each delivery arrived (x) against when it happened (y). The navy step line is the
+# watermark. An event that arrives after its window closed is a red ✕. Left: 2 minutes of patience. Right: 30 minutes.
 
 # %%
-replayed = run_idempotent(crash_at_batch=None)        # a fresh group: offsets start at 0
-U.check(replayed == truth, "replaying the retained log reproduces the result")
-print("committed offsets per group are independent; the log itself is untouched:", log.end_offsets())
-
-# %% [markdown]
-# ## ✱ Stretch · Exactly-once: commit results and offsets in one transaction
-#
-# Keep the per-city counts **and** the consumer offsets in the same DuckDB database, and update both in one transaction
-# per batch. Crash between processing and commit → the transaction rolls back → no double counting, even without a seen-set.
-
-# %%
-# BEGIN SOLUTION
-import duckdb
-
-db = duckdb.connect()
-db.sql("CREATE TABLE counts (city VARCHAR PRIMARY KEY, delivered INT)")
-db.sql("CREATE TABLE offsets (part INT PRIMARY KEY, next_offset INT)")
-db.executemany("INSERT INTO offsets VALUES (?, 0)", [[p] for p in range(4)])
-
-def run_transactional(crash_at_batch=10):
-    batches = 0
-    while True:
-        start = [r[0] for r in db.sql("SELECT next_offset FROM offsets ORDER BY part").fetchall()]
-        c = Consumer(log, "tx", {"tx": start})
-        batch = c.poll()
-        if not batch:
-            return
-        delta = Counter(e["city"] for *_, e in batch if e["event_type"] == "delivered")
-        db.begin()
-        for city, n in delta.items():
-            db.execute("INSERT INTO counts VALUES (?, ?) ON CONFLICT DO UPDATE SET delivered = delivered + excluded.delivered", [city, n])
-        batches += 1
-        if batches == crash_at_batch:
-            db.rollback()                                   # 💥 crash mid-transaction: nothing was applied
-            crash_at_batch = None
-            continue
-        db.executemany("UPDATE offsets SET next_offset = ? WHERE part = ?", [[c.position[p], p] for p in range(4)])
-        db.commit()
-
-run_transactional()
-tx = dict(db.sql("SELECT city, delivered FROM counts").fetchall())
-print("transactional:", tx)
-print("raw-duplicate-inclusive truth:", dict(Counter(e["city"] for e in events if e["event_type"] == "delivered")))
-# END SOLUTION
-
-# %% [markdown]
-# 🔍 The crash no longer double-counts, but the producer's duplicates still do: transactions make **your** processing
-# exactly-once; they can't undo duplicates already in the input. You still need a key to dedupe on. (Kafka's idempotent
-# producer and transactions solve the same two problems on the Kafka side.)
-#
-# ## Checkpoint
-#
-# 1. Why does Kafka guarantee ordering only within a partition? How do you choose the key?
-# 2. Your consumer commits offsets **before** processing a batch. What failure does that cause?
-# 3. Event time or processing time for "deliveries per 15 minutes"? When would you choose the other one?
-# 4. The ops team wants the dashboard updated within 2 minutes and finance wants exact daily totals. Design both with one stream.
-#
-# ## 🖼️ Visual summary
-#
-# **1 · Watermarks, drawn.** One busy hour of delivered events: when each arrived (x) against when it happened (y).
-# Events on the dotted diagonal arrived instantly; the further below it, the later. The navy step line is the watermark.
-# A window (the grey and white bands) is emitted once the watermark passes its top edge; an event that arrives after
-# that is dropped (red ✕). Left: 2 minutes of patience. Right: 30 minutes, same hour.
-
-# %%
-import de_viz as V
-
 V.watermark(events, [timedelta(minutes=2), timedelta(minutes=30)])
 
 # %% [markdown]
-# **2 · The trade-off from Task 4.** More patience, fewer dropped events, later results. Two measures, two panels.
+# 🔍 No setting gives both. Operations might take 2 minutes and a slightly low count. Finance wants exact totals and can recompute
+# in batch tonight. **That choice is a business decision**, so ask, don't guess.
+#
+# ## ✱ Stretch · Replay the log from offset 0 with a new reader
+#
+# The log is kept, not deleted on read. A new consumer group starts at offset 0 and rebuilds the answer: that's how you fix a bug
+# in a stream job.
 
 # %%
-V.bars(tradeoff, "allowed_lateness_min", ["late_events_dropped", "median_emit_delay_min"],
-       titles=["late events dropped", "median emit delay (min)"], ylabel="allowed lateness (min)")
+def stretch():
+    # BEGIN SOLUTION
+    replayed = run_idempotent(crash_at_batch=None, group="replay-after-bug-fix")
+    U.check(replayed == truth, "replaying the log reproduces the result")
+    # END SOLUTION
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write `stretch()` if you have time.")
+print("the log itself is untouched:", log.end_offsets())
+
+# %% [markdown]
+# ## Checkpoint
+#
+# 1. Your consumer saves its offset **before** doing the work, and crashes in between. What happens?
+#
+# <details><summary>Answer</summary>The restart skips the unfinished events: they are lost (at-most-once). Saving after the work repeats events instead, and repeats are the kind you can fix.</details>
+#
+# 2. Which clock for "deliveries per 15 minutes", and why?
+#
+# <details><summary>Answer</summary>Event time. Processing time shifts with every network hiccup, backlog and replay, so the same delivery could land in a different window each run.</details>
+#
+# 3. You raise the allowed lateness from 2 to 30 minutes. What gets better, and what gets worse?
+#
+# <details><summary>Answer</summary>Fewer late events are dropped and counts are more complete, but every window is published about 28 minutes later.</details>
+#
+# ## Carry forward
+#
+# Option 3 of the capstone replays these same events with event-time KPIs and SLA alerts: `stream_windows` is a good start.
+# Want more? `demos/streaming.ipynb`.

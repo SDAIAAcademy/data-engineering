@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 4 · Modern Data Engineering</title>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 4">
+
+<section class="slide title" data-label="Welcome">
+  <div class="kicker">SDAIA Academy · Modern Data Engineering</div>
+  <h1>Scale and production</h1>
+  <p class="lead mt">Day 4: tables on a lake, big jobs, live events and people's privacy</p>
+  <div class="meta">
+    <span class="track">AI Engineering Track</span>
+    <span>4 teaching days + capstone day</span>
+    <span>4 sessions · 4 labs</span>
+    <span>Fresh CS graduates</span>
+  </div>
+  <aside class="notes">Last teaching day. Days 1 to 3 built a platform that works for one team on one machine. Today asks what breaks when the data gets bigger, arrives live, or belongs to real people. The day ends with the capstone kickoff, so tell them now to start thinking about teammates.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Yesterday in three questions</div>
+  <h2>What does the grain of a fact table tell you?</h2>
+  <div class="quiz">
+    <p class="lead">You open <code>fct_order_items</code>. Someone says its grain is “one order line”. What does that tell you?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Which columns are indexed</div>
+      <div class="opt" data-k="B">How often the table is rebuilt</div>
+      <div class="opt" data-k="C" data-ok>What one row represents</div>
+      <div class="opt" data-k="D">Which team owns the table</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Grain says what one row is. Write it down first: every join and every SUM depends on it. Mix grains and revenue doubles without an error.</div>
+  </div>
+  <aside class="notes">Answer C. Ask for the fan-out story from Lab 3.1: joining an order-level fee to order lines repeats the fee on every line.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Yesterday in three questions</div>
+  <h2>Why does dbt want <code>ref()</code>?</h2>
+  <div class="quiz">
+    <p class="lead">A model says <code>FROM {{ ref('stg_orders') }}</code> instead of <code>FROM main.stg_orders</code>. What does that give you?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>dbt knows the dependency, so it builds in the right order and draws the lineage</div>
+      <div class="opt" data-k="B">The query runs faster because dbt caches the table</div>
+      <div class="opt" data-k="C">The model becomes a table instead of a view</div>
+      <div class="opt" data-k="D">dbt checks that <code>stg_orders</code> has no duplicates</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> <code>ref()</code> is how dbt learns the graph. Hard-code the table name and dbt can't order the build or show what depends on what.</div>
+  </div>
+  <aside class="notes">Answer A. A view or a table is the materialization setting; duplicates are a test.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Yesterday in three questions</div>
+  <h2>A test fails during <code>dbt build</code></h2>
+  <div class="quiz">
+    <p class="lead">A <code>unique</code> test on <code>order_id</code> fails with severity <code>error</code>. What happens to the models that depend on it?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">They are built anyway, with a warning in the log</div>
+      <div class="opt" data-k="B">dbt deletes the duplicate rows and carries on</div>
+      <div class="opt" data-k="C">dbt rolls back the whole warehouse</div>
+      <div class="opt" data-k="D" data-ok>They are skipped, so bad data doesn't reach them</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> <code>dbt build</code> runs models and tests in graph order. A failed error-level test stops what depends on it. With severity <code>warn</code>, the build carries on.</div>
+  </div>
+  <aside class="notes">Answer D. This is the blocking idea from Lab 3.3; Dagster's blocking asset check in Lab 3.4 is the same idea.</aside>
+</section>
+
+<section class="slide" data-label="Agenda">
+  <div class="kicker">Today</div>
+  <h2>Scale and production</h2>
+  <div class="agenda">
+    <div class="item now"><div><b>Session 1 · Lakehouse with Iceberg</b><small>Why a folder isn't a table: snapshots, atomic commits, time travel</small></div></div>
+    <div class="item"><div><b>Session 2 · Spark</b><small>Do you need a cluster? Then driver, executors, shuffles and reading a plan</small></div></div>
+    <div class="item"><div><b>Session 3 · Streaming</b><small>Logs and offsets, surviving crashes, event time, windows and watermarks</small></div></div>
+    <div class="item"><div><b>Session 4 · Governance + capstone kickoff</b><small>PDPL, four levels, finding PII, tokens, masked views. Then your project</small></div></div>
+  </div>
+  <aside class="notes">Four sessions, each about half concepts and half lab. The capstone kickoff at the end of Session 4 needs everyone in the room: it covers options, requirements and how to submit.</aside>
+</section>
+
+<section class="slide section" data-session="S1 · Lakehouse with Iceberg">
+  <div class="kicker">Session 1</div>
+  <h1>Lakehouse with Iceberg</h1>
+  <ul class="bullets outcomes">
+    <li>Explain why a folder of files can't give readers one consistent version</li>
+    <li>Follow an Iceberg table from its catalog down to its Parquet files</li>
+    <li>Go back in time, add a column and read one table with two engines</li>
+  </ul>
+  <div class="sess-no">01</div>
+  <aside class="notes">Day 1 named the lakehouse. Today you see why it needs more than files. Start straight with the boards.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A job rewrites the files one by one</h2>
+  <p class="lead small">A folder of files in the lake. From 10:00 to 10:04 a job rewrites it, one file at a time.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4lh-13-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4lh-13-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4lh-13-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="lake-inner" d="M31 20 L1174 22 Q1182 23 1180 33 L1178 491 Q1179 502 1168 500 L25 499 Q18 500 20 487 L21 29 Q20 19 31 20Z"/><path class="wire em" marker-end="url(#arr-d4lh-13-em)" data-id="w-polars" d="M305 180 L443 180"/></svg><div class="label hand teal" data-id="lake-inner-title" style="left:50px;top:36px;width:400px">INSIDE THE LAKE</div><div class="label tool-label " data-id="writer" style="left:70px;top:130px;width:230px"><strong>Writer job</strong><span>Rewrites the folder</span></div><div class="stage-box silver" data-id="lake-clean" style="left:450px;top:72px;width:420px"><h3>clean/delivery_events/</h3><div class="data-title"><span>File</span><span>At 10:02</span></div><div class="data-row"><span>part-1.csv</span><span class="teal">new</span></div><div class="data-row"><span>part-2.csv</span><span>old</span></div></div><div class="label tl-bar" data-id="tl-bar" style="left:240px;top:352px;width:720px">Job rewriting the files</div><div class="label tl-axis" data-id="tl-axis" style="left:80px;top:418px;width:1060px"></div><div class="label tl-tick" data-id="tl-tick-0" style="left:170px;top:426px;width:140px">10:00<span>job starts</span></div><div class="label tl-tick" data-id="tl-tick-1" style="left:350px;top:426px;width:140px">10:01<span>part-1 new</span></div><div class="label tl-tick" data-id="tl-tick-2" style="left:530px;top:426px;width:140px">10:02</div><div class="label tl-tick" data-id="tl-tick-3" style="left:710px;top:426px;width:140px">10:03<span>part-2 new</span></div><div class="label tl-tick" data-id="tl-tick-4" style="left:890px;top:426px;width:140px">10:04<span>job ends</span></div><div class="label tl-now" data-id="tl-now" style="left:598px;top:300px;width:4px"></div><div class="label muted" data-id="tl-now-label" style="left:614px;top:300px;width:330px">Now, 10:02</div></div>
+  <div class="callout tip"><b>Takeaway.</b> A rewrite takes time. Until it ends, the folder holds some new files and some old ones.</div>
+  <aside class="notes">We are inside the lake, looking at the clean/delivery_events/ folder. A job rewrites it, say after a cleaning rule was fixed. It can't replace both files at the same instant: part-1 is new at 10:01, part-2 only at 10:03. Point at the now line: at 10:02 the folder is half new, half old. The writer could be any engine: the problem belongs to plain files in folders, not to a tool. Ask: what would someone reading the folder right now get?</aside>
+</section>
+
+<section class="slide top">
+  <h2>Which version did the data scientist read?</h2>
+  <p class="lead small">At 10:02, while the job is still running, a data scientist reads the same folder.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4lh-14-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4lh-14-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4lh-14-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="lake-inner" d="M31 20 L1174 22 Q1182 23 1180 33 L1178 491 Q1179 502 1168 500 L25 499 Q18 500 20 487 L21 29 Q20 19 31 20Z"/><path class="wire em" marker-end="url(#arr-d4lh-14-em)" data-id="w-polars" d="M305 180 L443 180"/><path class="wire danger" marker-end="url(#arr-d4lh-14-danger)" data-id="w-reader" d="M875 180 L1210 180"/></svg><div class="label hand teal" data-id="lake-inner-title" style="left:50px;top:36px;width:400px">INSIDE THE LAKE</div><div class="label tool-label " data-id="writer" style="left:70px;top:130px;width:230px"><strong>Writer job</strong><span>Rewrites the folder</span></div><div class="stage-box silver" data-id="lake-clean" style="left:450px;top:72px;width:420px"><h3>clean/delivery_events/</h3><div class="data-title"><span>File</span><span>At 10:02</span></div><div class="data-row"><span>part-1.csv</span><span class="teal">new</span></div><div class="data-row"><span>part-2.csv</span><span>old</span></div></div><div class="label tl-bar" data-id="tl-bar" style="left:240px;top:352px;width:720px">Job rewriting the files</div><div class="label tl-axis" data-id="tl-axis" style="left:80px;top:418px;width:1060px"></div><div class="label tl-tick" data-id="tl-tick-0" style="left:170px;top:426px;width:140px">10:00<span>job starts</span></div><div class="label tl-tick" data-id="tl-tick-1" style="left:350px;top:426px;width:140px">10:01<span>part-1 new</span></div><div class="label tl-tick" data-id="tl-tick-2" style="left:530px;top:426px;width:140px">10:02</div><div class="label tl-tick" data-id="tl-tick-3" style="left:710px;top:426px;width:140px">10:03<span>part-2 new</span></div><div class="label tl-tick" data-id="tl-tick-4" style="left:890px;top:426px;width:140px">10:04<span>job ends</span></div><div class="label tl-now read" data-id="tl-now" style="left:598px;top:300px;width:4px"></div><div class="label red" data-id="tl-now-label" style="left:614px;top:300px;width:330px">The data scientist reads</div><div class="label tl-zone" data-id="tl-before" style="left:40px;top:350px;width:190px">Read before 10:00:<br>all old ✓</div><div class="label tl-zone" data-id="tl-after" style="left:975px;top:350px;width:190px">Read after 10:04:<br>all new ✓</div><figure class="figure" data-id="reader" style="left:1215px;top:60px;width:170px;margin:0"><div class="art scientist" aria-hidden="true"></div><figcaption>Data scientist</figcaption><p class="detail">Training a model</p></figure><p class="annotation red" style="left:895px;top:192px;width:285px">Gets part-1 new<br>+ part-2 old: a mix</p></div>
+  <div class="callout tip"><b>Takeaway.</b> A folder can't switch all its files at once, so a read during a rewrite gets a mix that was never a real version.</div>
+  <aside class="notes">The read and the write overlap: part-1 new and part-2 old, a combination that was never a whole version of the data. No error is raised, so nobody notices, and the model is trained on it. A read before 10:00 or after 10:04 is fine. Only the overlap fails, and the longer the job and the more readers you have, the likelier it is. Ask: would a bigger server change this? No: it's about what the storage promises.</aside>
+</section>
+
+<section class="slide ">
+  <h2>You’ll catch this yourself: a total that never existed</h2>
+  <p class="lead small">Lab 4.1, step 1. Two Parquet files of August orders. A job adds 15% VAT to the delivery fees, one file at a time.</p>
+  <div class="art-row"><div class="art scientist"></div>
+    <div class="cols cols-3" style="flex:1">
+      <div class="stat"><div class="big">40,635.00</div><div class="lbl">SAR before the job</div></div>
+      <div class="stat"><div class="big" style="color:var(--coral)">43,044.75</div><div class="lbl">SAR during the job: what the reader got</div></div>
+      <div class="stat"><div class="big">46,730.25</div><div class="lbl">SAR after the job</div></div>
+    </div></div>
+  <div class="callout tip"><b>What goes wrong.</b> Nothing fails and nothing warns. Only one thing is missing: one place that says which files are the table right now.</div>
+  <aside class="notes">These three numbers are the lab's real output, on the 4,701 orders of 1 to 7 August. The middle number is not a rounding issue: part-1 has VAT, part-2 doesn't. Say that a total which is plausible and wrong is the most expensive kind of bug, because no alert fires.</aside>
+</section>
+
+<section class="slide top">
+  <h2>One complete table version</h2>
+  <p class="lead small">Apache Iceberg is a <b>table format</b>: Parquet files plus metadata that lists which files are the table.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4lh-15-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4lh-15-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4lh-15-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-d4lh-15-em)" d="M410 210 L565 210"/><path class="wire em" marker-end="url(#arr-d4lh-15-em)" d="M870 210 L1025 210"/></svg><div class="stage-box silver" data-id="snapshot41" style="left:40px;top:100px;width:360px"><h3>Snapshot 41</h3><div class="number">41</div><p>Both old files</p></div><div class="label tool-label " data-id="iceberg" style="left:600px;top:0px;width:340px"><strong>Apache Iceberg</strong><span>Publishes one snapshot at a time</span></div><figure class="figure" data-id="writer" style="left:600px;top:85px;width:210px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>Prepare + commit</figcaption></figure><div class="stage-box gold" data-id="snapshot42" style="left:1050px;top:100px;width:350px"><h3>Snapshot 42</h3><div class="number">42</div><p>Both new files</p></div><p class="annotation " style="left:40px;top:380px;width:440px">Current reads remain consistent</p><p class="annotation teal" style="left:1000px;top:380px;width:440px">New reads use the new snapshot</p></div>
+  <div class="callout tip"><b>Takeaway.</b> A <b>snapshot</b> is one complete version of the table. <b>Atomic commit</b>: readers see the old version whole or the new one whole.</div>
+  <aside class="notes">Snapshot numbers on the board are illustrative. The job prepares its new files where nobody is looking, then publishes them in one step. A query that started on 41 finishes on 41. A new query gets 42. If the job crashes before the commit, 41 is still the table and nothing is half-done. These guarantees don't replace access control, business definitions or quality checks.</aside>
+</section>
+
+<section class="slide top">
+  <h2>What’s on disk: a tree of pointers</h2>
+  <p class="lead small">Two appends in Lab 4.1 left nine files. A reader follows the pointers and never lists a folder.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4tree-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4tree-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4tree-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em frag" data-frag="a" marker-end="url(#arr-d4tree-em)" d="M180 190 L228 190"/><path class="wire  frag" data-frag="b" marker-end="url(#arr-d4tree-normal)" d="M482 190 L538 190"/><path class="wire  frag" data-frag="c" marker-end="url(#arr-d4tree-normal)" d="M772 190 L838 190"/><path class="wire  frag" data-frag="d" marker-end="url(#arr-d4tree-normal)" d="M1072 190 L1138 190"/></svg><figure class="figure" style="left:10px;top:90px;width:160px;margin:0"><div class="art catalog" aria-hidden="true"></div><figcaption>Catalog<div class="detail">qafila.orders</div></figcaption></figure><div class="stage-box  frag" data-frag="a" style="left:235px;top:90px;width:240px"><h3>metadata.json</h3><p>schema, list of snapshots</p><span class="tag">3 files: one per commit</span></div><div class="stage-box silver frag" data-frag="b" style="left:545px;top:90px;width:220px"><h3>Manifest list</h3><p>one per snapshot</p><span class="tag">2 files</span></div><div class="stage-box silver frag" data-frag="c" style="left:845px;top:90px;width:220px"><h3>Manifest</h3><p>data files, with min and max</p><span class="tag">2 files</span></div><div class="stage-box gold frag" data-frag="d" style="left:1145px;top:90px;width:280px"><h3>Data files</h3><p>the rows, in Parquet</p><span class="tag">2 files · 64.0 + 38.7 kB</span></div><p class="annotation teal center frag" data-frag="e" style="left:235px;top:395px;width:1190px">The commit is one step: the catalog’s pointer moves to a new metadata.json.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Catalog</b>: maps a table name to its current metadata file. Every engine asks it what “now” is.</div>
+  <aside class="notes">Press once per level. Real counts from the lab after two appends: 3 metadata.json (the empty table plus one per append), 2 manifest lists, 2 manifests, 2 Parquet files. Manifests hold per-file min and max per column, the same skipping idea as Parquet statistics in Lab 1.4, one level up. In the lab the catalog is a small SQLite file; at work it's a service. You don't need to memorize the names: you need the idea that moving one pointer is the whole commit.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Every change is a new snapshot, and old ones stay</h2>
+  <p class="lead small">Parquet files are never edited. Lab 4.1’s table after two loads, five refunds and one customer’s delete.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4time-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4time-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4time-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire " marker-end="url(#arr-d4time-normal)" d="M262 165 L295 165"/><path class="wire " marker-end="url(#arr-d4time-normal)" d="M547 165 L580 165"/><path class="wire " marker-end="url(#arr-d4time-normal)" d="M832 165 L865 165"/><path class="wire " marker-end="url(#arr-d4time-normal)" d="M1117 165 L1150 165"/><path class="wire em" marker-end="url(#arr-d4time-em)" d="M440 335 C420 290 400 260 400 215"/></svg><div class="label hand muted center" style="left:20px;top:60px;width:245px">batch 1</div><div class="label rec order" style="left:20px;top:120px;width:245px"><b>S1 · append</b><span>1,868 rows</span></div><div class="label hand muted center" style="left:305px;top:60px;width:245px">batch 2</div><div class="label rec order" style="left:305px;top:120px;width:245px"><b>S2 · append</b><span>4,701 rows</span></div><div class="label hand muted center" style="left:590px;top:60px;width:245px">upsert: out with 5</div><div class="label rec order" style="left:590px;top:120px;width:245px"><b>S3 · overwrite</b><span>4,696 rows</span></div><div class="label hand muted center" style="left:875px;top:60px;width:245px">upsert: 5 refunded</div><div class="label rec order" style="left:875px;top:120px;width:245px"><b>S4 · append</b><span>4,701 rows</span></div><div class="label hand muted center" style="left:1160px;top:60px;width:245px">delete: 1 customer</div><div class="label rec copy" style="left:1160px;top:120px;width:245px"><b>S5 · overwrite</b><span>4,700 rows</span></div><div class="label hand teal center" style="left:1160px;top:215px;width:245px">current</div><figure class="figure" style="left:450px;top:280px;width:130px;margin:0"><div class="art analyst" aria-hidden="true"></div></figure><p class="annotation teal" style="left:610px;top:290px;width:800px">What did the table say before the changes? <br>Read an old snapshot: orders.scan(snapshot_id=…)</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Time travel</b>: read the table as it was at an old snapshot. It’s how you debug “what did the dashboard see?”</div>
+  <aside class="notes">Real rows from the lab's history table. An upsert is two snapshots in PyIceberg: S3 removes the old versions of five orders, S4 adds them back with status refunded. Then S5 deletes one customer's single order. Ask: is that customer's order gone? Not yet: it's still readable in S1 to S4, and a real erasure must also expire those snapshots and remove the files. That one sentence is all we say about erasure on Iceberg today.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Add a column without touching the data</h2>
+  <p class="lead small">The app starts recording the sales channel. The change goes into the metadata only.</p>
+  <div class="board s"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4schema-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4schema-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4schema-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire " marker-end="url(#arr-d4schema-normal)" d="M455 190 C510 190 540 230 590 240"/><path class="wire " marker-end="url(#arr-d4schema-normal)" d="M455 370 C510 370 540 300 590 280"/></svg><div class="label tbl mono" style="left:20px;top:120px;width:430px"><div class="t-title">Old file<span class="src">written in August</span></div><div class="t-row h" style="grid-template-columns:150px 1fr 1fr"><span>order_id</span><span>status</span><span></span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>5040001</span><span>delivered</span><span></span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>…</span><span></span><span></span></div></div><div class="label tbl mono" style="left:20px;top:300px;width:430px"><div class="t-title">New file<span class="src">after the change</span></div><div class="t-row h" style="grid-template-columns:150px 1fr 1fr"><span>order_id</span><span>status</span><span>channel</span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>5040002</span><span>delivered</span><span>app</span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>…</span><span></span><span></span></div></div><div class="label tbl mono gold" style="left:600px;top:180px;width:480px"><div class="t-title">What a reader sees</div><div class="t-row h" style="grid-template-columns:150px 1fr 1fr"><span>order_id</span><span>status</span><span>channel</span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>5040001</span><span>delivered</span><span>NULL</span></div><div class="t-row" style="grid-template-columns:150px 1fr 1fr"><span>5040002</span><span>delivered</span><span>app</span></div></div><div class="label count" style="left:1130px;top:110px;width:280px"><b>0</b><br>data files rewritten</div><div class="label count" style="left:1130px;top:230px;width:280px"><b>4,700</b><br>old rows read NULL</div><div class="label count" style="left:1130px;top:350px;width:280px"><b>701</b><br>new rows have a channel</div><div class="label code" style="left:20px;top:20px;width:1000px">with orders.update_schema() as update:<br>&nbsp;&nbsp;&nbsp;&nbsp;update.add_column("channel", StringType())</div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Schema change</b> is a metadata edit. Old files stay as they are, and old rows read the new column as NULL.</div>
+  <aside class="notes">Real counts from Lab 4.1 step 5: no Parquet file changes when the column is added; then one day of September orders is appended with channel app. Order ids on the board are illustrative. Compare it with a plain folder, where you'd have to decide what to do with every old file, and every reader would have to know. In exercise 3 you add the column yourself.</aside>
+</section>
+
+<section class="slide top">
+  <h2>One table, many engines</h2>
+  <p class="lead small">Files stay in the lake. Iceberg and a catalog define the versions, for any engine that speaks Iceberg.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4lh-17-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4lh-17-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4lh-17-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="lake-box" d="M406 58 L1049 60 Q1057 61 1055 71 L1053 434 Q1054 445 1043 443 L400 442 Q393 443 395 430 L396 67 Q395 57 406 58Z"/><path class="wire em" marker-end="url(#arr-d4lh-17-em)" data-id="w-db" d="M315 175 L393 175"/><path class="wire em" marker-end="url(#arr-d4lh-17-em)" data-id="w-files" d="M245 350 C310 350 345 300 393 300"/><path class="wire em" marker-end="url(#arr-d4lh-17-em)" data-id="w-analyst" d="M1060 175 L1180 175"/><path class="wire em" marker-end="url(#arr-d4lh-17-em)" data-id="w-scientist" d="M1060 300 C1110 300 1145 365 1180 365"/></svg><div class="label hand muted" data-id="sources-title" style="left:22px;top:0px;width:300px">SOURCE SYSTEMS</div><figure class="figure" data-id="app" style="left:10px;top:60px;width:125px;margin:0"><div class="art app" aria-hidden="true"></div><figcaption>Qafila app</figcaption></figure><figure class="figure" data-id="source-db" style="left:160px;top:73px;width:155px;margin:0"><div class="art db" aria-hidden="true"></div><figcaption>Orders + payments</figcaption></figure><figure class="figure" data-id="source-files" style="left:15px;top:262px;width:220px;margin:0"><div class="art files" aria-hidden="true" style="width:140px;margin:0 auto"></div><figcaption>Events + reviews</figcaption></figure><div class="label hand muted" data-id="users-title" style="left:1180px;top:0px;width:250px">CONSUMERS</div><figure class="figure" data-id="analyst" style="left:1200px;top:55px;width:165px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Analysts</figcaption><p class="detail">Reports + BI</p></figure><figure class="figure" data-id="scientist" style="left:1165px;top:296px;width:220px;margin:0"><div class="art scientist" aria-hidden="true" style="width:130px;margin:0 auto"></div><figcaption>Data scientists</figcaption><p class="detail">Explore + ML</p></figure><div class="label hand teal" data-id="lake-title" style="left:425px;top:76px;width:400px">DATA LAKEHOUSE</div><div class="label muted" data-id="readers" style="left:700px;top:80px;width:330px">Read by DuckDB + Polars</div><figure class="figure" data-id="lake" style="left:465px;top:130px;width:225px;margin:0"><div class="art house" aria-hidden="true"></div><figcaption>Lake storage</figcaption><p class="detail">Folders of data files</p></figure><figure class="figure" data-id="catalog" style="left:790px;top:135px;width:185px;margin:0"><div class="art catalog" aria-hidden="true"></div><figcaption>Iceberg + catalog</figcaption><p class="detail">Table versions</p></figure></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Lakehouse</b>: lake storage plus a reliable table layer. In Lab 4.1, DuckDB and Polars both count 4,700 August orders.</div>
+  <aside class="notes">This closes the question from Day 1. Warehouse and lake merge into one layer. Compatible engines read and write the same table: in the lab DuckDB and Polars read it, at work Spark might write it and Trino or DuckDB serve queries. Support differs by engine and by table feature, so check before you promise. Iceberg is one choice: Delta Lake and Hudi solve the same problem. Quality, access control and modeling are still your job.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>What should Qafila change first?</h2>
+  <div class="quiz">
+    <p class="lead">Data scientists sometimes read a mix of old and new files during a rewrite. What fixes that?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Move the job to a bigger server so the rewrite is shorter</div>
+      <div class="opt" data-k="B" data-ok>Keep the files in a table format, so a rewrite publishes one snapshot in one step</div>
+      <div class="opt" data-k="C">Run the job at night, when fewer people read</div>
+      <div class="opt" data-k="D">Ask readers to retry when a number looks wrong</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> A shorter or later rewrite only shrinks the window, and nobody can tell a wrong number from a right one. An atomic commit removes the window.</div>
+  </div>
+  <aside class="notes">Answer B. A, C and D all leave the gap open. Ask who has seen a dashboard wrong for five minutes and then fine.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 4.1">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 4.1 · 25 min</div>
+      <h2>A table on a folder: Iceberg</h2>
+      <p class="lead small">Catch a folder mid-rewrite, then build the table that fixes it, time-travel it and read it with two engines.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_1_iceberg_lakehouse.ipynb" target="_blank" rel="noopener">labs/D4_1_iceberg_lakehouse.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Catch a folder mid-rewrite <span class="min">4 min</span></li>
+      <li>Create an Iceberg table and load two batches <span class="min">6 min</span></li>
+      <li>Walk the metadata tree on disk <span class="min">4 min</span></li>
+      <li>Change rows and time travel <span class="min">6 min</span></li>
+      <li>Add a column; read with DuckDB and Polars <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Expire old snapshots and see which files stay on disk</li>
+    </ul>
+  </div>
+  <aside class="notes">Three small exercises: two lines, one line, two lines. Each has a safety net, so an unfinished exercise doesn't block the next step. The first run downloads DuckDB's iceberg extension: on a blocked network the DuckDB half of step 5 fails and Polars still works. Common failure: running the upsert cell twice gives more snapshots than the notes describe; restart the notebook from the top.</aside>
+</section>
+
+<section class="slide section" data-session="S2 · Spark">
+  <div class="kicker">Session 2</div>
+  <h1>Spark</h1>
+  <ul class="bullets outcomes">
+    <li>Decide whether a job needs a cluster at all</li>
+    <li>Explain driver, executors, partitions and why nothing runs until an action</li>
+    <li>Find the shuffles in a physical plan</li>
+  </ul>
+  <div class="sess-no">02</div>
+  <aside class="notes">The honest framing first: most of you will not need Spark for most jobs, and you will still meet it at work. So the goal is to read it, not to tune it.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Do you need a cluster? Usually not</h2>
+  <p class="lead small">Measure first. Disks and memory on one machine go a long way, and a cluster costs money and adds ways to fail.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4need-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4need-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4need-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-d4need-em)" d="M470 110 L590 80"/><path class="wire " marker-end="url(#arr-d4need-normal)" d="M470 230 L590 230"/><path class="wire " marker-end="url(#arr-d4need-normal)" d="M470 340 L590 385"/></svg><div class="stage-box silver" style="left:30px;top:60px;width:420px"><h3>One machine</h3><p><span class="number" style="display:block">0.07 s</span>172,545 lines · 2.2 MB · DuckDB</p><span class="tag">Lab 4.2 step 1: daily sales per city</span></div><div class="label rec copy" style="left:600px;top:30px;width:800px"><b>It fits on one machine in the time you have</b><span>DuckDB or Polars. Stop here: no cluster to pay for or to fail.</span></div><div class="label rec order" style="left:600px;top:180px;width:800px"><b>One machine can’t finish in the time you have</b><span>Then Spark: the same kind of work, split across many machines.</span></div><div class="label rec chg" style="left:600px;top:330px;width:800px"><b>Your company already runs everything on Spark</b><span>Then you’ll read and change Spark jobs. That’s why we’re here.</span></div><p class="annotation teal" style="left:30px;top:400px;width:520px">Most jobs fit on one machine.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Spark</b> runs one job across many machines. Reach for it when you’ve measured that you need it, not because the data feels big.</div>
+  <aside class="notes">Be honest: Qafila's lab data is tiny, and that is the point. Step 1 of the lab times this exact query on DuckDB before Spark starts. The time depends on your machine; ours was 0.07 s, best of three. Ask: what would make this stop fitting? A job that takes longer than the time between runs, or files larger than one disk. Say out loud that we use Spark today because you'll meet it, not because this data needs it.</aside>
+</section>
+
+<section class="slide top">
+  <h2>One driver plans, many executors work</h2>
+  <p class="lead small">Two roles. You talk to the driver, and the driver hands out tasks.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4drv-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4drv-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4drv-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire " marker-end="url(#arr-d4drv-normal)" d="M170 185 L240 185"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-d4drv-em)" d="M505 150 C600 100 640 70 715 70"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-d4drv-em)" d="M505 185 L715 240"/><path class="wire em frag" data-frag="a" marker-end="url(#arr-d4drv-em)" d="M505 220 C600 330 640 410 715 410"/></svg><figure class="figure" style="left:10px;top:80px;width:150px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>Your code</figcaption></figure><div class="stage-box silver" style="left:245px;top:80px;width:260px"><h3>Driver</h3><p>turns your code into a plan, then into tasks</p></div><div class="stage-box compact frag" data-frag="a" style="left:720px;top:10px;width:680px"><h3>Executor 1</h3></div><div class="stage-box compact frag" data-frag="a" style="left:720px;top:180px;width:680px"><h3>Executor 2</h3></div><div class="stage-box compact frag" data-frag="a" style="left:720px;top:350px;width:680px"><h3>Executor 3</h3></div><div class="label fee frag" data-frag="b" style="left:780px;top:74px;width:150px">task 1</div><div class="label fee frag" data-frag="b" style="left:950px;top:74px;width:150px">task 2</div><div class="label caption frag" data-frag="b" style="left:1130px;top:80px;width:250px">1 core = 1 task at a time</div><div class="label fee frag" data-frag="b" style="left:780px;top:244px;width:150px">task 3</div><div class="label fee frag" data-frag="b" style="left:950px;top:244px;width:150px">task 4</div><div class="label caption frag" data-frag="b" style="left:1130px;top:250px;width:250px">1 core = 1 task at a time</div><div class="label fee frag" data-frag="b" style="left:780px;top:414px;width:150px">task 5</div><div class="label fee frag" data-frag="b" style="left:950px;top:414px;width:150px">task 6</div><div class="label caption frag" data-frag="b" style="left:1130px;top:420px;width:250px">1 core = 1 task at a time</div><p class="annotation teal frag" data-frag="c" style="left:10px;top:340px;width:480px">In the lab: all of this inside one notebook, on 2 cores. Your code stays the same on a cluster.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Driver</b>: the one process that plans. <b>Executor</b>: a worker process that runs <b>tasks</b>, one per core at a time.</div>
+  <aside class="notes">Press to reveal executors, then tasks, then the lab note. If an executor dies, the driver hands its tasks to another one: that's what you pay for. In the lab, master is local[2]: the driver and the executor share one process on two cores. Say that on Colab the setup installs Java 17 and PySpark: about a minute on first run.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Partitions: the data, cut into pieces of work</h2>
+  <p class="lead small">One Parquet file, cut small so you can see it (recorded in <code>tools/spark.ipynb</code>).</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4par-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4par-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4par-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire " marker-end="url(#arr-d4par-normal)" d="M700 66 L700 106"/></svg><div class="label tl-bar" style="left:30px;top:12px;width:1360px;box-sizing:border-box">order_items.parquet · 172,545 lines</div><div class="label fee frag" data-frag="a" style="left:30px;top:112px;width:317px">P0</div><div class="label caption center frag" data-frag="a" style="left:20px;top:154px;width:337px">40,960</div><div class="label fee frag" data-frag="a" style="left:357px;top:112px;width:155px">P1</div><div class="label caption center frag" data-frag="a" style="left:347px;top:154px;width:175px">20,480</div><div class="label fee frag" data-frag="a" style="left:522px;top:112px;width:317px">P2</div><div class="label caption center frag" data-frag="a" style="left:512px;top:154px;width:337px">40,960</div><div class="label fee frag" data-frag="a" style="left:849px;top:112px;width:155px">P3</div><div class="label caption center frag" data-frag="a" style="left:839px;top:154px;width:175px">20,480</div><div class="label fee frag" data-frag="a" style="left:1014px;top:112px;width:317px">P4</div><div class="label caption center frag" data-frag="a" style="left:1004px;top:154px;width:337px">40,960</div><div class="label fee frag" data-frag="a" style="left:1341px;top:112px;width:63px">P5</div><div class="label caption center frag" data-frag="a" style="left:1331px;top:154px;width:83px">8,705</div><div class="label hand muted frag" data-frag="b" style="left:30px;top:236px;width:110px">core 1</div><div class="label fee frag" data-frag="b" style="left:150px;top:240px;width:317px">P0</div><div class="label fee frag" data-frag="b" style="left:477px;top:240px;width:155px">P3</div><div class="label fee frag" data-frag="b" style="left:642px;top:240px;width:317px">P4</div><div class="label hand muted frag" data-frag="b" style="left:30px;top:306px;width:110px">core 2</div><div class="label fee frag" data-frag="b" style="left:150px;top:310px;width:155px">P1</div><div class="label fee frag" data-frag="b" style="left:315px;top:310px;width:317px">P2</div><div class="label fee frag" data-frag="b" style="left:642px;top:310px;width:63px">P5</div><p class="annotation teal frag" data-frag="c" style="left:30px;top:400px;width:1360px">One partition = one task. Two cores: two tasks at a time, each taking the next as soon as it’s free.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Partition</b>: one piece of a dataset. A job is only as fast as its slowest partition.</div>
+  <aside class="notes">Real partition sizes from the recorded walkthrough, which set maxPartitionBytes to 256k so that a small file splits at all. The order of tasks on the cores is a sketch of the rule (the next task goes to the first free core), not a measurement. That one sentence about the slowest partition is all we say about skew today. Going faster means more cores or a better split.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Nothing runs until you ask for a result</h2>
+  <p class="lead small">Transformations only add a step to a plan. An action runs the plan.</p>
+  <div class="cols cols-21 mid">
+    <pre class="code" data-file="recorded: tools/spark.ipynb"><code class="language-python">big_baskets = (items.filter(F.col("quantity") &gt;= 3)
+    .withColumn("line_total",
+        F.col("quantity") * F.col("unit_price")
+        - F.col("discount"))
+    .select("order_id", "product_id",
+            "quantity", "line_total"))
+# jobs started so far: 0
+
+n = big_baskets.count()
+# jobs started: 2 → 49,371 lines</code></pre>
+    <div class="stack">
+      <div class="card c-teal"><h4>Transformation</h4><p class="small mb0"><code>filter</code>, <code>select</code>, <code>join</code>, <code>groupBy</code>: 0 jobs</p></div>
+      <div class="card c-coral"><h4>Action</h4><p class="small mb0"><code>count</code>, <code>show</code>, <code>collect</code>, <code>write</code>: the work happens here</p></div>
+    </div>
+  </div>
+  <div class="callout tip mt"><b>Why wait?</b> With the whole plan in hand, Spark can skip what the result doesn’t need. A line that “ran instantly” on 2 TB did nothing yet.</div>
+  <aside class="notes">Common confusion: a student's code runs fast and then the last line takes ten minutes, and they blame the last line. The 0 and 2 are real counts from the recorded run. Next slide shows what waiting buys.</aside>
+</section>
+
+<section class="slide top">
+  <h2>What waiting buys: Spark opens one folder of 61</h2>
+  <p class="lead small">The filter is on the column the folders are named after, so Spark skips the other 60 before reading a row.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4prune-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4prune-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4prune-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-d4prune-em)" d="M785 215 L785 150"/></svg><div class="label hand muted" style="left:30px;top:20px;width:700px">orders/ · one folder per day</div><div class="label files" style="left:30px;top:90px;width:900px"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="k"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="label tl-tick" style="left:10px;top:145px;width:130px">2026-08-01</div><div class="label tl-tick" style="left:790px;top:145px;width:130px">2026-09-30</div><div class="label code" style="left:480px;top:215px;width:950px">orders.filter((F.col("order_date") == "2026-09-23") &amp;<br>&nbsp;&nbsp;&nbsp;&nbsp;(F.col("status") == "delivered")).count()</div><div class="label code" style="left:480px;top:300px;width:950px">PartitionFilters: [order_date = 2026-09-23]</div><div class="label count" style="left:1000px;top:40px;width:390px"><b>61 → 1</b><br>folders opened</div><figure class="figure" style="left:40px;top:215px;width:170px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>National Day</figcaption></figure><div class="label count" style="left:250px;top:260px;width:200px"><b>1,246</b><br>delivered orders</div></div>
+  <div class="callout tip"><b>Takeaway.</b> Find <code>PartitionFilters</code> in a plan to check that a filter really skips folders. Same idea as the folders in Lab 1.4.</div>
+  <aside class="notes">Recorded on Spark 4.2 in an earlier run of this query; the 1,246 is also what DuckDB counts on this machine. PushedFilters go further down: into the Parquet reader, which uses min and max. Common failure: filter on a computed value such as a substring of the date, and the skipping silently disappears.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A shuffle: rows cross the network so equal keys meet</h2>
+  <p class="lead small">Each partition holds a bit of every city. To add up one city, its rows have to move.</p>
+  <div class="board s"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4shuf-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4shuf-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4shuf-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 55 C700 55 780 55 880 55"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 70 C700 120 780 185 880 195"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 85 C680 200 760 300 880 330"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 190 C700 150 780 90 880 70"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 200 L880 205"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 215 C700 250 780 310 880 340"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 320 C700 250 780 120 880 85"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 330 C700 290 780 240 880 215"/><path class="wire danger frag" data-frag="a" marker-end="url(#arr-d4shuf-danger)" d="M560 345 L880 345"/></svg><div class="label hand muted" style="left:10px;top:38px;width:110px">task 1</div><div class="label evt assigned" style="left:130px;top:20px;width:130px"><b>Riyadh</b></div><div class="label evt picked" style="left:270px;top:20px;width:130px"><b>Jeddah</b></div><div class="label evt delivered" style="left:410px;top:20px;width:130px"><b>Dammam</b></div><div class="label hand muted" style="left:10px;top:173px;width:110px">task 2</div><div class="label evt picked" style="left:130px;top:155px;width:130px"><b>Jeddah</b></div><div class="label evt assigned" style="left:270px;top:155px;width:130px"><b>Riyadh</b></div><div class="label evt delivered" style="left:410px;top:155px;width:130px"><b>Dammam</b></div><div class="label hand muted" style="left:10px;top:308px;width:110px">task 3</div><div class="label evt delivered" style="left:130px;top:290px;width:130px"><b>Dammam</b></div><div class="label evt assigned" style="left:270px;top:290px;width:130px"><b>Riyadh</b></div><div class="label evt picked" style="left:410px;top:290px;width:130px"><b>Jeddah</b></div><div class="label hand muted frag" data-frag="b" style="left:1100px;top:38px;width:130px">task 4</div><div class="label evt assigned frag" data-frag="b" style="left:890px;top:20px;width:130px"></div><div class="label evt assigned frag" data-frag="b" style="left:912px;top:24px;width:130px"></div><div class="label evt assigned frag" data-frag="b" style="left:934px;top:28px;width:130px"><b>Riyadh</b></div><div class="label hand muted frag" data-frag="b" style="left:1100px;top:173px;width:130px">task 5</div><div class="label evt picked frag" data-frag="b" style="left:890px;top:155px;width:130px"></div><div class="label evt picked frag" data-frag="b" style="left:912px;top:159px;width:130px"></div><div class="label evt picked frag" data-frag="b" style="left:934px;top:163px;width:130px"><b>Jeddah</b></div><div class="label hand muted frag" data-frag="b" style="left:1100px;top:308px;width:130px">task 6</div><div class="label evt delivered frag" data-frag="b" style="left:890px;top:290px;width:130px"></div><div class="label evt delivered frag" data-frag="b" style="left:912px;top:294px;width:130px"></div><div class="label evt delivered frag" data-frag="b" style="left:934px;top:298px;width:130px"><b>Dammam</b></div><div class="label hand red frag" data-frag="a" style="left:590px;top:-6px;width:340px">Exchange: rows move</div><p class="annotation teal frag" data-frag="c" style="left:130px;top:430px;width:1250px">groupBy("city"): all of a city’s rows have to meet on one worker. That takes the network.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Shuffle</b>: rows move between machines by key. <code>groupBy</code>, <code>join</code> and <code>orderBy</code> cause them, and they’re where jobs get slow.</div>
+  <aside class="notes">Press once for the moves, again for the result. The drawing is an illustration, not a count. A filter or select works on each partition where it is: no network. A group-by can't. Small dimension tables are the exception: Spark copies them to every worker instead of shuffling, and you'll see BroadcastHashJoin in the plan. That's all we say about join tuning today.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Read a plan from the bottom up</h2>
+  <p class="lead small">Daily sales per city from Lab 4.2, shortened from a recorded <code>explain()</code>. Each <code>Exchange</code> is a shuffle.</p>
+  <pre class="code s" data-file="daily_df.explain()"><code class="language-plaintext">Sort [order_date, city]
+ <span class="hl-line">Exchange rangepartitioning(order_date, city)              &lt;- shuffle 3: orderBy</span>
+  HashAggregate(keys=[city, order_date])
+   <span class="hl-line">Exchange hashpartitioning(city, order_date)             &lt;- shuffle 2: groupBy</span>
+    HashAggregate(keys=[city, order_date, order_id])
+     <span class="hl-line">Exchange hashpartitioning(city, order_date, order_id)   &lt;- shuffle 1: countDistinct</span>
+      HashAggregate(keys=[city, order_date, order_id])
+       BroadcastHashJoin [store_id]                         &lt;- stores copied, no shuffle
+        BroadcastHashJoin [order_id]                        &lt;- orders copied, no shuffle
+         Filter (quantity &gt; 0)
+          FileScan parquet [order_id, quantity, unit_price, discount]</code></pre>
+  <div class="callout tip mt"><b>Takeaway.</b> Start at <code>FileScan</code>, climb up, count the <code>Exchange</code> lines. Three shuffles here. When a job is slow, look there first.</div>
+  <aside class="notes">Shortened by hand from the recorded physical plan of Spark 4.2: real operators, ids and long argument lists removed. In the real output you also see AQEShuffleRead: adaptive execution at run time, which you can ignore today. Ask: which line of your code caused each Exchange? The extra one under group-by comes from countDistinct.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Each task writes its own file</h2>
+  <p class="lead small">A recorded run: the same rows written twice to one folder per city.</p>
+  <div class="board"><div class="label hand muted" style="left:30px;top:10px;width:560px">Plain write: 8 tasks</div><div class="label hand teal" style="left:790px;top:10px;width:560px">After repartition("city")</div><div class="label tree" style="left:30px;top:88px;width:200px"><span class="dir">city=Riyadh/</span></div><div class="label files" style="left:240px;top:80px;width:180px"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="label tree" style="left:790px;top:88px;width:200px"><span class="dir">city=Riyadh/</span></div><div class="label files one frag" data-frag="a" style="left:1000px;top:80px;width:60px"><span class="k"></span></div><div class="label tree" style="left:30px;top:178px;width:200px"><span class="dir">city=Jeddah/</span></div><div class="label files" style="left:240px;top:170px;width:180px"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="label tree" style="left:790px;top:178px;width:200px"><span class="dir">city=Jeddah/</span></div><div class="label files one frag" data-frag="a" style="left:1000px;top:170px;width:60px"><span class="k"></span></div><div class="label tree" style="left:30px;top:268px;width:200px"><span class="dir">city=Dammam/</span></div><div class="label files" style="left:240px;top:260px;width:180px"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="label tree" style="left:790px;top:268px;width:200px"><span class="dir">city=Dammam/</span></div><div class="label files one frag" data-frag="a" style="left:1000px;top:260px;width:60px"><span class="k"></span></div><div class="label count" style="left:30px;top:360px;width:560px"><b>24 files</b><br>each task writes one into each folder</div><div class="label count frag" data-frag="a" style="left:790px;top:360px;width:560px"><b>3 files</b><br>one task per city</div></div>
+  <div class="callout tip"><b>Takeaway.</b> Tasks × folders = files. Repartition by the folder’s column before you write, or small files pile up.</div>
+  <aside class="notes">8 tasks times 3 cities is 24 files: the recorded result is 24 and 3. At 1,000 tasks and 365 days it would be 365,000. This is exercise 3, and it's the kind of one-word fix you can make in your first month. Compaction exists for tables that already have this problem; we leave it for later.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>The job got slow. Where do you look first?</h2>
+  <div class="quiz">
+    <p class="lead">You added a <code>groupBy</code> and an <code>orderBy</code> to a Spark job, and it went from one minute to twenty. Where do you look first?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">At the <code>filter</code> lines, because filters read the most data</div>
+      <div class="opt" data-k="B">At the driver’s memory setting</div>
+      <div class="opt" data-k="C">At the Parquet file format</div>
+      <div class="opt" data-k="D" data-ok>At the <code>Exchange</code> lines in the plan</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> <code>groupBy</code> and <code>orderBy</code> add shuffles, and rows crossing the network is usually the slowest part. <code>explain()</code> shows them as <code>Exchange</code>.</div>
+  </div>
+  <aside class="notes">Answer D. Filters run in place and usually make things faster. Then show them the Spark UI in the lab stretch.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 4.2">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 4.2 · 25 min</div>
+      <h2>Spark: when you need it, and how to read it</h2>
+      <p class="lead small">Run on Colab: time it on one machine, run Spark with DataFrames and SQL, find the shuffles, count the files.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_2_spark.ipynb" target="_blank" rel="noopener">labs/D4_2_spark.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Do you need a cluster? Time it on one machine <span class="min">3 min</span></li>
+      <li>Start Spark; see that nothing runs until an action <span class="min">6 min</span></li>
+      <li>Daily sales per city: DataFrame API and SQL <span class="min">6 min</span></li>
+      <li>Read the plan and find the shuffles <span class="min">5 min</span></li>
+      <li>Write partitioned output; count the files <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Open the Spark UI and find your shuffle</li>
+    </ul>
+  </div>
+  <aside class="notes">Everyone uses Colab here: the first Spark cell installs Java 17 and PySpark, about a minute, so start it while you explain. Local Windows needs Java and winutils: don't debug that in class. The exercises are one line, one call with a hint, and one line. Common failure: a typo in F.col names gives an AnalysisException that lists the available columns, so read it to the end.</aside>
+</section>
+
+<section class="slide section" data-session="S3 · Streaming">
+  <div class="kicker">Session 3</div>
+  <h1>Streaming</h1>
+  <ul class="bullets outcomes">
+    <li>Decide when a stream is worth it, and when batch is enough</li>
+    <li>Explain logs, offsets and how to survive crashes and repeats</li>
+    <li>Choose between event time and processing time, and set a watermark</li>
+  </ul>
+  <div class="sess-no">03</div>
+  <aside class="notes">Everything so far was batch. Khalid's order is on the road right now, 15 minutes in. Operations asks: is it going to make the 30-minute promise?</aside>
+</section>
+
+<section class="slide top">
+  <h2>Stream only where someone acts within minutes</h2>
+  <p class="lead small">Operations asks if Khalid’s order will make its 30 minutes. A nightly batch answers tomorrow. Most teams are fine with batch.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4st-1-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4st-1-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4st-1-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="zone-stream" d="M1 -14 L544 -12 Q552 -11 550 -1 L548 377 Q549 388 538 386 L-5 385 Q-12 386 -10 373 L-9 -5 Q-10 -15 1 -14Z"/><path class="enclosure silver" data-id="zone-batch" d="M591 -14 L1444 -12 Q1452 -11 1450 -1 L1448 377 Q1449 388 1438 386 L585 385 Q578 386 580 373 L581 -5 Q580 -15 591 -14Z"/><path class="wire axis" marker-end="url(#arr-d4st-1-normal)" data-id="axis" d="M0 330 L1425 330"/><path class="wire thin" marker-end="url(#arr-d4st-1-normal)" d="M110 255 L110 320"/><path class="wire thin" marker-end="url(#arr-d4st-1-normal)" d="M400 255 L400 320"/><path class="wire thin" marker-end="url(#arr-d4st-1-normal)" d="M980 255 L980 320"/><path class="wire thin" marker-end="url(#arr-d4st-1-normal)" d="M1270 255 L1270 320"/></svg><figure class="figure" data-id="f-risk" style="left:45px;top:40px;width:130px;margin:0"><div class="art payment" aria-hidden="true"></div><figcaption>Fraud check</figcaption></figure><figure class="figure" data-id="f-ops" style="left:335px;top:40px;width:130px;margin:0"><div class="art operations" aria-hidden="true"></div><figcaption>Operations</figcaption></figure><figure class="figure" data-id="f-fin" style="left:915px;top:40px;width:130px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption></figure><figure class="figure" data-id="f-pur" style="left:1205px;top:40px;width:130px;margin:0"><div class="art stakeholders" aria-hidden="true"></div><figcaption>Purchasing</figcaption></figure><div class="label tick" data-id="tk0" style="left:10px;top:345px;width:200px">seconds</div><div class="label tick" data-id="tk1" style="left:300px;top:345px;width:200px">minutes</div><div class="label tick" data-id="tk2" style="left:590px;top:345px;width:200px">hours</div><div class="label tick" data-id="tk3" style="left:880px;top:345px;width:200px">next morning</div><div class="label tick" data-id="tk4" style="left:1170px;top:345px;width:200px">next week</div><div class="label hand teal" data-id="z-s" style="left:20px;top:0px;width:200px">Stream</div><div class="label hand muted" data-id="z-b" style="left:1250px;top:0px;width:180px">Batch</div><p class="annotation " style="left:0px;top:420px;width:1440px">A stream costs more to build and to run. Data science needs months of history: batch.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Batch</b>: process records on a schedule. <b>Stream</b>: process each event as it arrives. Stream only when minutes-old is too late.</div>
+  <aside class="notes">A fraud check must answer before the payment is captured (seconds). Operations acts on late orders (minutes). Finance closes yesterday's books in the morning, purchasing reacts to weekly price lists, data science trains on months of history: batch is cheaper and simpler for all of them. Ask the room: what decision changes if this number is 5 minutes old instead of 5 hours?</aside>
+</section>
+
+<section class="slide top">
+  <h2>Write them down in arrival order: a log</h2>
+  <p class="lead small">An <b>event</b> is a record of one thing that happened. Each goes on the end of the log, and its position is its offset.</p>
+  <div class="board"><figure class="figure" data-id="phone" style="left:0px;top:80px;width:110px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>Couriers</figcaption></figure><div class="label evt assigned " data-id="e883assigned" style="left:120px;top:110px;width:104px"><b>…883</b><span>assigned</span></div><div class="label evt picked " data-id="e774picked" style="left:240px;top:110px;width:104px"><b>…774</b><span>picked up</span></div><div class="label evt delivered " data-id="e939delivered" style="left:360px;top:110px;width:104px"><b>…939</b><span>delivered</span></div><div class="label evt way " data-id="e774way" style="left:480px;top:110px;width:104px"><b>…774</b><span>on the way</span></div><div class="label evt delivered " data-id="e590delivered" style="left:600px;top:110px;width:104px"><b>…590</b><span>delivered</span></div><div class="label evt picked " data-id="e883picked" style="left:720px;top:110px;width:104px"><b>…883</b><span>picked up</span></div><div class="label evt way " data-id="e883way" style="left:840px;top:110px;width:104px"><b>…883</b><span>on the way</span></div><div class="label evt failed " data-id="e774failed" style="left:960px;top:110px;width:104px"><b>…774</b><span>failed</span></div><div class="label evt assigned " data-id="e775assigned" style="left:1080px;top:110px;width:104px"><b>…775</b><span>assigned</span></div><div class="label evt delivered " data-id="e883delivered" style="left:1200px;top:110px;width:104px"><b>…883</b><span>delivered</span></div><div class="label off" data-id="o0" style="left:120px;top:84px;width:104px">13489</div><div class="label off" data-id="o1" style="left:240px;top:84px;width:104px">13490</div><div class="label off" data-id="o2" style="left:360px;top:84px;width:104px">13491</div><div class="label off" data-id="o3" style="left:480px;top:84px;width:104px">13492</div><div class="label off" data-id="o4" style="left:600px;top:84px;width:104px">13493</div><div class="label off" data-id="o5" style="left:720px;top:84px;width:104px">13494</div><div class="label off" data-id="o6" style="left:840px;top:84px;width:104px">13495</div><div class="label off" data-id="o7" style="left:960px;top:84px;width:104px">13496</div><div class="label off" data-id="o8" style="left:1080px;top:84px;width:104px">13497</div><div class="label off" data-id="o9" style="left:1200px;top:84px;width:104px">13498</div><div class="label evt ghost" data-id="ghost" style="left:1320px;top:110px;width:104px"><b>&nbsp;</b><span>next</span></div><div class="label tool-label " data-id="t-kafka" style="left:120px;top:250px;width:500px"><strong>Kafka</strong><span>keeps this log: a topic</span></div><p class="annotation teal" style="left:700px;top:265px;width:700px">Only added to · never edited · kept for days</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Log</b>: an ordered list you only add to. <b>Offset</b>: a position in it. Kafka, the usual tool, calls a log a <b>topic</b>.</div>
+  <aside class="notes">This is all a Kafka topic is underneath, minus replication and disks. The phones append at the end, through Qafila's backend. Khalid's first event is at offset 13,489 because 13,489 events of the week arrived before it. Offsets are positions, not timestamps. The log is kept for days, so anything in it can be read again.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Split the log in four: partitions</h2>
+  <p class="lead small">So several readers can share the work. The key, <code>order_id</code>, picks the partition.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4st-3-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4st-3-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4st-3-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-d4st-3-em)" data-id="w-p0" d="M115 245 C130 245 130 65 145 65"/><path class="wire em" marker-end="url(#arr-d4st-3-em)" data-id="w-p1" d="M115 245 C130 245 130 185 145 185"/><path class="wire em" marker-end="url(#arr-d4st-3-em)" data-id="w-p2" d="M115 245 C130 245 130 305 145 305"/><path class="wire em" marker-end="url(#arr-d4st-3-em)" data-id="w-p3" d="M115 245 C130 245 130 425 145 425"/></svg><figure class="figure" data-id="phone" style="left:0px;top:170px;width:110px;margin:0"><div class="art courier" aria-hidden="true"></div><figcaption>Couriers</figcaption></figure><div class="label evt delivered " data-id="e939delivered" style="left:230px;top:30px;width:104px"><b>…939</b><span>delivered</span></div><div class="label off" data-id="off3383" style="left:230px;top:6px;width:104px">3383</div><div class="label hand muted" data-id="p0" style="left:162px;top:48px;width:60px">P0</div><div class="label evt assigned " data-id="e775assigned" style="left:230px;top:150px;width:104px"><b>…775</b><span>assigned</span></div><div class="label off" data-id="off3373" style="left:230px;top:126px;width:104px">3373</div><div class="label hand muted" data-id="p1" style="left:162px;top:168px;width:60px">P1</div><div class="label evt assigned " data-id="e883assigned" style="left:230px;top:270px;width:104px"><b>…883</b><span>assigned</span></div><div class="label off" data-id="off3336" style="left:230px;top:246px;width:104px">3336</div><div class="label evt delivered " data-id="e590delivered" style="left:354px;top:270px;width:104px"><b>…590</b><span>delivered</span></div><div class="label off" data-id="off3337" style="left:354px;top:246px;width:104px">3337</div><div class="label evt picked " data-id="e883picked" style="left:478px;top:270px;width:104px"><b>…883</b><span>picked up</span></div><div class="label off" data-id="off3338" style="left:478px;top:246px;width:104px">3338</div><div class="label evt way " data-id="e883way" style="left:602px;top:270px;width:104px"><b>…883</b><span>on the way</span></div><div class="label off" data-id="off3339" style="left:602px;top:246px;width:104px">3339</div><div class="label evt delivered " data-id="e883delivered" style="left:726px;top:270px;width:104px"><b>…883</b><span>delivered</span></div><div class="label off" data-id="off3340" style="left:726px;top:246px;width:104px">3340</div><div class="label hand muted" data-id="p2" style="left:162px;top:288px;width:60px">P2</div><div class="label evt picked " data-id="e774picked" style="left:230px;top:390px;width:104px"><b>…774</b><span>picked up</span></div><div class="label off" data-id="off3397" style="left:230px;top:366px;width:104px">3397</div><div class="label evt way " data-id="e774way" style="left:354px;top:390px;width:104px"><b>…774</b><span>on the way</span></div><div class="label off" data-id="off3398" style="left:354px;top:366px;width:104px">3398</div><div class="label evt failed " data-id="e774failed" style="left:478px;top:390px;width:104px"><b>…774</b><span>failed</span></div><div class="label off" data-id="off3399" style="left:478px;top:366px;width:104px">3399</div><div class="label hand muted" data-id="p3" style="left:162px;top:408px;width:60px">P3</div><p class="annotation " style="left:900px;top:40px;width:540px">partition = hash(order_id) mod 4</p><p class="annotation teal" style="left:900px;top:280px;width:540px">All of Khalid’s events land in P2, in order</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Partition</b>: one of a topic’s logs. <b>Key</b>: the field that picks it. Same key, same partition, so order holds.</div>
+  <aside class="notes">Exactly Lab 4.3 step 1: every event keyed by order_id into 4 partitions. The offsets are the real ones: Khalid's four events are at P2 offsets 3336, 3338, 3339 and 3340, and the lab prints them. Order holds inside a partition, never across partitions. That's why you key by order: all of Khalid's steps are read in order. Each partition numbers its own offsets.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Each reader keeps its own place</h2>
+  <p class="lead small">Operations and data science read the same partition. Each saves the next offset it will read.</p>
+  <div class="board"><div class="label hand muted" data-id="p2-title" style="left:150px;top:60px;width:700px">PARTITION P2 · key = order_id</div><div class="label evt assigned " data-id="e590assigned" style="left:150px;top:150px;width:104px"><b>…590</b><span>assigned</span></div><div class="label off" data-id="off3333" style="left:150px;top:124px;width:104px">3333</div><div class="label evt picked " data-id="e590picked" style="left:280px;top:150px;width:104px"><b>…590</b><span>picked up</span></div><div class="label off" data-id="off3334" style="left:280px;top:124px;width:104px">3334</div><div class="label evt way " data-id="e590way" style="left:410px;top:150px;width:104px"><b>…590</b><span>on the way</span></div><div class="label off" data-id="off3335" style="left:410px;top:124px;width:104px">3335</div><div class="label evt assigned " data-id="e883assigned" style="left:540px;top:150px;width:104px"><b>…883</b><span>assigned</span></div><div class="label off" data-id="off3336" style="left:540px;top:124px;width:104px">3336</div><div class="label evt delivered " data-id="e590delivered" style="left:670px;top:150px;width:104px"><b>…590</b><span>delivered</span></div><div class="label off" data-id="off3337" style="left:670px;top:124px;width:104px">3337</div><div class="label evt picked " data-id="e883picked" style="left:800px;top:150px;width:104px"><b>…883</b><span>picked up</span></div><div class="label off" data-id="off3338" style="left:800px;top:124px;width:104px">3338</div><div class="label evt way " data-id="e883way" style="left:930px;top:150px;width:104px"><b>…883</b><span>on the way</span></div><div class="label off" data-id="off3339" style="left:930px;top:124px;width:104px">3339</div><div class="label evt delivered " data-id="e883delivered" style="left:1060px;top:150px;width:104px"><b>…883</b><span>delivered</span></div><div class="label off" data-id="off3340" style="left:1060px;top:124px;width:104px">3340</div><div class="label evt ghost" data-id="ghost" style="left:1190px;top:150px;width:104px"><b>&nbsp;</b><span>next</span></div><div class="label ptr sla" data-id="ptr-ops" style="left:1180px;top:228px;width:130px">▲ next 3341</div><div class="label ptr fraud" data-id="ptr-ds" style="left:530px;top:228px;width:130px">▲ next 3336</div><figure class="figure" data-id="f-ops" style="left:1167px;top:280px;width:150px;margin:0"><div class="art operations" aria-hidden="true"></div><figcaption>Operations</figcaption><p class="detail">live board</p></figure><figure class="figure" data-id="f-ds" style="left:517px;top:280px;width:150px;margin:0"><div class="art scientist" aria-hidden="true"></div><figcaption>Data science</figcaption><p class="detail">loads history</p></figure><p class="annotation " style="left:0px;top:320px;width:480px">Reading deletes nothing. A reader’s place is just a saved number.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Consumer group</b>: readers with their own saved offsets. Reading deletes nothing, so a new reader can replay from offset 0.</div>
+  <aside class="notes">P2 up close at 01:55. The operations board has read everything: its next offset is 3341. Data science loads history in batches and is behind at 3336. Neither removes anything. A consumer saves (commits) its offset as it goes. Replay is how you fix a bug in a stream job: a new group starts at offset 0 and gets the same counts. The next question is when to save.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A crash: lost, or counted twice</h2>
+  <p class="lead small">The same crash, with the reader’s place saved before the work or after it.</p>
+  <div class="board"><div class="label evt assigned " data-id="e883assigned" style="left:300px;top:40px;width:104px"><b>…883</b><span>assigned</span></div><div class="label off" data-id="off3336" style="left:300px;top:16px;width:104px">3336</div><div class="label evt delivered " data-id="e590delivered" style="left:430px;top:40px;width:104px"><b>…590</b><span>delivered</span></div><div class="label off" data-id="off3337" style="left:430px;top:16px;width:104px">3337</div><div class="label evt picked " data-id="e883picked" style="left:560px;top:40px;width:104px"><b>…883</b><span>picked up</span></div><div class="label off" data-id="off3338" style="left:560px;top:16px;width:104px">3338</div><div class="label evt way lost" data-id="e883way" style="left:690px;top:40px;width:104px"><b>…883</b><span>on the way</span></div><div class="label off" data-id="off3339" style="left:690px;top:16px;width:104px">3339</div><div class="label evt delivered lost" data-id="e883delivered" style="left:820px;top:40px;width:104px"><b>…883</b><span>delivered</span></div><div class="label off" data-id="off3340" style="left:820px;top:16px;width:104px">3340</div><div class="label ptr saved" data-id="a-saved" style="left:930px;top:118px;width:150px">▲ restart 3341</div><div class="label ptr red" data-id="a-crash" style="left:620px;top:-10px;width:120px">💥 crash</div><div class="label reason" data-id="lane-a" style="left:0px;top:45px;width:270px"><b>Save → work</b><br>at-most-once</div><p class="annotation red" style="left:1100px;top:20px;width:340px">Restart at 3341: Khalid’s last two events are <b>never read</b>. The board still says “picked up”.</p><div class="label evt assigned twice" data-id="b0" style="left:300px;top:270px;width:104px"><b>…883</b><span>assigned</span></div><div class="label off" data-id="boff0" style="left:300px;top:246px;width:104px">3336</div><div class="label evt delivered twice" data-id="b1" style="left:430px;top:270px;width:104px"><b>…590</b><span>delivered</span></div><div class="label off" data-id="boff1" style="left:430px;top:246px;width:104px">3337</div><div class="label evt picked twice" data-id="b2" style="left:560px;top:270px;width:104px"><b>…883</b><span>picked up</span></div><div class="label off" data-id="boff2" style="left:560px;top:246px;width:104px">3338</div><div class="label evt way " data-id="b3" style="left:690px;top:270px;width:104px"><b>…883</b><span>on the way</span></div><div class="label off" data-id="boff3" style="left:690px;top:246px;width:104px">3339</div><div class="label evt delivered " data-id="b4" style="left:820px;top:270px;width:104px"><b>…883</b><span>delivered</span></div><div class="label off" data-id="boff4" style="left:820px;top:246px;width:104px">3340</div><div class="label ptr saved" data-id="b-saved" style="left:280px;top:348px;width:150px">▲ restart 3336</div><div class="label ptr red" data-id="b-crash" style="left:620px;top:220px;width:120px">💥 crash</div><div class="label reason" data-id="lane-b" style="left:0px;top:275px;width:270px"><b>Work → save</b><br>at-least-once</div><p class="annotation red" style="left:1100px;top:250px;width:340px">Restart at 3336: three events read <b>twice</b>. Order 5043590 counts as two deliveries.</p><p class="annotation teal" style="left:0px;top:440px;width:1440px">Neither is exactly once. Choose at-least-once, then make repeats harmless.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>At-most-once</b>: save first, and a crash loses events. <b>At-least-once</b>: save after, and a crash repeats them. Nothing is lost.</div>
+  <aside class="notes">Top lane: saved before the work. Restart at 3341, and Khalid's last two events are never read. The board says picked up forever. Bottom lane: saved after the work. Restart at 3336, and three events are read twice, so order 5043590 counts as two deliveries. Losing is usually worse than repeating. So choose at-least-once, and fix the repeats in the output.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Count each event_id once</h2>
+  <p class="lead small">The phones send repeats too (312 in the week). The output remembers which ids it has counted, so a repeat changes nothing.</p>
+  <div class="board"><div class="stage-box silver" data-id="sink" style="left:0px;top:0px;width:640px"><h3>Idempotent output</h3><p>Keep the event_ids already counted.<br>Seen before? Skip it.</p><span class="tag">MERGE on a key · upsert · a seen-set</span></div><div class="label rec copy" data-id="seen1" style="left:0px;top:260px;width:640px"><b>ev-0014914 · first copy</b><span>not seen before: count it</span><i>+1</i></div><div class="label rec dup" data-id="seen2" style="left:0px;top:345px;width:640px"><b>ev-0014914 · second copy</b><span>already counted: skip</span><i>+0</i></div><div class="stage-box gold" data-id="week" style="left:760px;top:0px;width:680px"><h3>Lab 4.3 · the week</h3><div class="data-row"><span>right answer</span><span>5,257</span></div><div class="data-row"><span>crash + repeats</span><span class="red">5,374</span></div><div class="data-row"><span>each id once</span><span class="teal">5,257 ✓</span></div><span class="tag">delivered events, 24–30 Sep</span></div><p class="annotation teal" style="left:760px;top:330px;width:680px">One fix for both: the crash’s re-read and the phone’s repeat.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Idempotent</b>: doing it twice has the same effect as once. At-least-once + an idempotent output = effectively once.</div>
+  <aside class="notes">Lab 4.3 step 3. A consumer that crashes once between work and save, on top of the phones' 312 repeats, counts 5,374 deliveries instead of 5,257: 117 too many. Counting each event_id once gives exactly 5,257 despite both. At work the seen-set lives in the output: a MERGE keyed by event_id, as in Lab 2.3. When someone says exactly-once, they usually mean this.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Every event has two clocks</h2>
+  <p class="lead small"><b>Event time</b>: when it happened on the phone. <b>Processing time</b>: when we received or read it. Which day was Khalid delivered?</p>
+  <div class="board"><div class="label reason" data-id="r-proc" style="left:0px;top:25px;width:330px"><b>Processing time</b><br>when our job read it</div><div class="label rec copy" data-id="pt-live" style="left:380px;top:20px;width:500px"><b>live run</b><span>read at 01:54:59 on 28 Sep</span><i>28 Sep</i></div><div class="label rec wrong" data-id="pt-replay" style="left:940px;top:20px;width:500px"><b>replay after a bug fix</b><span>read on 29 Sep at 10:00</span><i>29 Sep</i></div><div class="label reason" data-id="r-event" style="left:0px;top:205px;width:330px"><b>Event time</b><br>when it happened</div><div class="label rec copy" data-id="et-live" style="left:380px;top:200px;width:500px"><b>live run</b><span>happened 01:54:55 on 28 Sep</span><i>28 Sep</i></div><div class="label rec copy" data-id="et-replay" style="left:940px;top:200px;width:500px"><b>replay after a bug fix</b><span>happened 01:54:55 on 28 Sep</span><i>28 Sep</i></div><p class="annotation teal" style="left:0px;top:380px;width:1440px">The business asks when things happened. Processing time only says when we heard.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> Group by event time: you get the same answer live, after a hiccup and after every replay.</div>
+  <aside class="notes">The replay time is illustrative: say the job had a bug and we replay the topic the next morning at 10:00. By processing time, Khalid's delivery moves to 29 September and the 28th loses a delivery. By event time it stays on the 28th, every time. Real detail from the lab: his delivery took 4.7 seconds from phone to platform, and the app writes event time in three formats (18,031 with +03:00, 3,372 in UTC, 1,115 as epoch millis). The parser in step 4 handles them.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Group the endless stream into windows</h2>
+  <p class="lead small">Riyadh deliveries, 13:00 to 14:00. One line leans far to the right: a delivery from 13:11 arrived at 13:57, 46 minutes late.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4st-6-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4st-6-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4st-6-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure silver" data-id="win0" d="M155 16 L430 18 Q438 19 436 29 L434 71 Q435 82 424 80 L149 79 Q142 80 144 67 L145 25 Q144 15 155 16Z"/><path class="enclosure silver" data-id="win1" d="M455 16 L730 18 Q738 19 736 29 L734 71 Q735 82 724 80 L449 79 Q442 80 444 67 L445 25 Q444 15 455 16Z"/><path class="enclosure silver" data-id="win2" d="M755 16 L1030 18 Q1038 19 1036 29 L1034 71 Q1035 82 1024 80 L749 79 Q742 80 744 67 L745 25 Q744 15 755 16Z"/><path class="enclosure silver" data-id="win3" d="M1055 16 L1330 18 Q1338 19 1336 29 L1334 71 Q1335 82 1324 80 L1049 79 Q1042 80 1044 67 L1045 25 Q1044 15 1055 16Z"/><path class="wire axis" marker-end="url(#arr-d4st-6-normal)" data-id="ax-e" d="M140 120 L1370 120"/><path class="wire axis" marker-end="url(#arr-d4st-6-normal)" data-id="ax-a" d="M140 330 L1370 330"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-0" d="M336.7 126 L339.3 324"/><path class="wire danger" marker-end="url(#arr-d4st-6-danger)" data-id="ln-1" d="M377.3 126 L1298 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-2" d="M389.3 126 L391.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-3" d="M481 126 L481.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-4" d="M486 126 L486.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-5" d="M494 126 L495.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-6" d="M514.7 126 L515 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-7" d="M528.3 126 L529.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-8" d="M646.3 126 L649 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-9" d="M688.7 126 L689.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-10" d="M695 126 L696 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-11" d="M712.7 126 L715 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-12" d="M812 126 L814 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-13" d="M937 126 L937.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-14" d="M1006 126 L1006.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-15" d="M1006 126 L1032 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-16" d="M1011 126 L1011 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-17" d="M1129.7 126 L1132 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-18" d="M1134.7 126 L1135 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-19" d="M1150 126 L1151.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-20" d="M1314.3 126 L1315.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-6-normal)" data-id="ln-21" d="M1319.3 126 L1320 324"/></svg><div class="label tick" data-id="te0" style="left:100px;top:84px;width:80px">13:00</div><div class="label tick" data-id="ta0" style="left:100px;top:340px;width:80px">13:00</div><div class="label tick" data-id="te1" style="left:400px;top:84px;width:80px">13:15</div><div class="label tick" data-id="ta1" style="left:400px;top:340px;width:80px">13:15</div><div class="label tick" data-id="te2" style="left:700px;top:84px;width:80px">13:30</div><div class="label tick" data-id="ta2" style="left:700px;top:340px;width:80px">13:30</div><div class="label tick" data-id="te3" style="left:1000px;top:84px;width:80px">13:45</div><div class="label tick" data-id="ta3" style="left:1000px;top:340px;width:80px">13:45</div><div class="label tick" data-id="te4" style="left:1300px;top:84px;width:80px">14:00</div><div class="label tick" data-id="ta4" style="left:1300px;top:340px;width:80px">14:00</div><div class="label hand teal" data-id="ax-e-t" style="left:0px;top:100px;width:130px">Happened</div><div class="label hand muted" data-id="ax-a-t" style="left:0px;top:310px;width:130px">Arrived</div><div class="label count " data-id="cnt0" style="left:160px;top:24px;width:260px"><b>3</b> deliveries</div><div class="label count " data-id="cnt1" style="left:460px;top:24px;width:260px"><b>9</b> deliveries</div><div class="label count " data-id="cnt2" style="left:760px;top:24px;width:260px"><b>4</b> deliveries</div><div class="label count " data-id="cnt3" style="left:1060px;top:24px;width:260px"><b>5</b> deliveries</div><div class="label reason" data-id="w-tumble" style="left:0px;top:400px;width:440px"><b>Tumbling</b><br>fixed, no overlap: this board</div><div class="label reason" data-id="w-hop" style="left:480px;top:400px;width:440px"><b>Hopping</b><br>15 min every 5: each event in 3 windows</div><div class="label reason" data-id="w-session" style="left:960px;top:400px;width:440px"><b>Session</b><br>ends after 30 min of silence: a shift</div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Window</b>: a slice of event time that a count is grouped by. The hard question is when a slice is finished.</div>
+  <aside class="notes">Real events on 28 September. Almost every line is vertical: the event arrived seconds after it happened. Over the week half arrive within 4.2 s, the slowest after about 50 minutes (2,991 s): a phone offline in a basement. The counts are complete, counted once the hour has arrived. The lab uses tumbling windows, which don't overlap; the other two kinds are there so you recognize the names. But a live board has to publish 13:00 to 13:15 at some point.</aside>
+</section>
+
+<section class="slide top">
+  <h2>When is a window finished? A watermark guesses</h2>
+  <p class="lead small">W = newest event time seen − 5 minutes of allowed lateness. W past a window’s end: publish.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4st-8-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4st-8-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4st-8-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure closed" data-id="win0" d="M155 16 L430 18 Q438 19 436 29 L434 71 Q435 82 424 80 L149 79 Q142 80 144 67 L145 25 Q144 15 155 16Z"/><path class="enclosure closed" data-id="win1" d="M455 16 L730 18 Q738 19 736 29 L734 71 Q735 82 724 80 L449 79 Q442 80 444 67 L445 25 Q444 15 455 16Z"/><path class="enclosure closed" data-id="win2" d="M755 16 L1030 18 Q1038 19 1036 29 L1034 71 Q1035 82 1024 80 L749 79 Q742 80 744 67 L745 25 Q744 15 755 16Z"/><path class="enclosure silver" data-id="win3" d="M1055 16 L1330 18 Q1338 19 1336 29 L1334 71 Q1335 82 1324 80 L1049 79 Q1042 80 1044 67 L1045 25 Q1044 15 1055 16Z"/><path class="wire axis" marker-end="url(#arr-d4st-8-normal)" data-id="ax-e" d="M140 120 L1370 120"/><path class="wire axis" marker-end="url(#arr-d4st-8-normal)" data-id="ax-a" d="M140 330 L1370 330"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-0" d="M336.7 126 L339.3 324"/><path class="wire danger" marker-end="url(#arr-d4st-8-danger)" data-id="ln-1" d="M377.3 126 L1298 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-2" d="M389.3 126 L391.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-3" d="M481 126 L481.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-4" d="M486 126 L486.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-5" d="M494 126 L495.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-6" d="M514.7 126 L515 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-7" d="M528.3 126 L529.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-8" d="M646.3 126 L649 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-9" d="M688.7 126 L689.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-10" d="M695 126 L696 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-11" d="M712.7 126 L715 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-12" d="M812 126 L814 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-13" d="M937 126 L937.7 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-14" d="M1006 126 L1006.3 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-15" d="M1006 126 L1032 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-16" d="M1011 126 L1011 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-17" d="M1129.7 126 L1132 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-18" d="M1134.7 126 L1135 324"/><path class="wire thin" marker-end="url(#arr-d4st-8-normal)" data-id="ln-19" d="M1150 126 L1151.7 324"/><path class="wire danger dashed" marker-end="url(#arr-d4st-8-danger)" data-id="wm" d="M1050 104 L1050 154"/><path class="wire em" marker-end="url(#arr-d4st-8-em)" data-id="now" d="M1298 390 L1298 338"/></svg><div class="label tick" data-id="te0" style="left:100px;top:84px;width:80px">13:00</div><div class="label tick" data-id="ta0" style="left:100px;top:340px;width:80px">13:00</div><div class="label tick" data-id="te1" style="left:400px;top:84px;width:80px">13:15</div><div class="label tick" data-id="ta1" style="left:400px;top:340px;width:80px">13:15</div><div class="label tick" data-id="te2" style="left:700px;top:84px;width:80px">13:30</div><div class="label tick" data-id="ta2" style="left:700px;top:340px;width:80px">13:30</div><div class="label tick" data-id="te3" style="left:1000px;top:84px;width:80px">13:45</div><div class="label tick" data-id="ta3" style="left:1000px;top:340px;width:80px">13:45</div><div class="label tick" data-id="te4" style="left:1300px;top:84px;width:80px">14:00</div><div class="label tick" data-id="ta4" style="left:1300px;top:340px;width:80px">14:00</div><div class="label hand teal" data-id="ax-e-t" style="left:0px;top:100px;width:130px">Happened</div><div class="label hand muted" data-id="ax-a-t" style="left:0px;top:310px;width:130px">Arrived</div><div class="label count closed" data-id="cnt0" style="left:160px;top:24px;width:260px"><b>2</b> published</div><div class="label count closed" data-id="cnt1" style="left:460px;top:24px;width:260px"><b>9</b> published</div><div class="label count closed" data-id="cnt2" style="left:760px;top:24px;width:260px"><b>4</b> published</div><div class="label count " data-id="cnt3" style="left:1060px;top:24px;width:260px"><b>3</b> so far</div><div class="label ptr red chip" data-id="wm-l" style="left:882px;top:134px;width:160px">W = 13:45:30</div><div class="label ptr teal" data-id="now-l" style="left:1180px;top:374px;width:110px">now 13:57</div><div class="label ptr red" data-id="drop" style="left:1270px;top:296px;width:30px">✕</div><p class="annotation " style="left:0px;top:410px;width:700px">13:57:54: order 5043815’s delivery finally arrives</p><p class="annotation red" style="left:720px;top:410px;width:720px">Its window closed half an hour ago: the event is dropped.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Watermark</b>: “I have probably seen everything before W.” A <b>late event</b> arrives after its window closed, and is dropped.</div>
+  <aside class="notes">It's 13:57:54. The newest delivery seen happened at 13:50:30, so W is 13:45:30, and three windows have been published with 2, 9 and 4 deliveries. Order 5043815's delivery belongs to 13:00 to 13:15, which closed at 13:25: it's dropped, and the live count stays 2 instead of 3. With 46 minutes of lateness it would count, but every window would come 46 minutes later. That's the next slide.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Wait longer, or answer sooner?</h2>
+  <p class="lead small">Lab 4.3, the whole week: delivered orders per city per 15-minute window.</p>
+  <div class="board"><table class="mapping compact"><thead><tr><th>Allowed lateness</th><th>Late events dropped</th><th>Windows exactly right</th><th>Median wait for a result</th></tr></thead><tbody><tr><td class="zone">0 min</td><td>140</td><td>90.3%</td><td>1.1 min</td></tr><tr><td class="zone">2 min</td><td>133</td><td>90.7%</td><td>3.2 min</td></tr><tr><td class="zone">10 min</td><td>108</td><td>92.5%</td><td>11.2 min</td></tr><tr><td class="zone">30 min</td><td>40</td><td>97.2%</td><td>31.1 min</td></tr><tr><td class="zone">60 min</td><td>0</td><td>100%</td><td>61.1 min</td></tr></tbody></table><div class="label reason" data-id="need-ops" style="left:0px;top:440px;width:680px"><b>Operations</b> · 2 minutes; a slightly low count is fine</div><div class="label reason" data-id="need-fin" style="left:740px;top:440px;width:700px"><b>Finance</b> · exact totals; recompute in batch tonight</div></div>
+  <div class="callout tip"><b>Takeaway.</b> Latency or completeness is a business decision, so ask. Kafka keeps logs and Flink or Spark run windows; often the output is an Iceberg table.</div>
+  <aside class="notes">You produce this table in Lab 4.3 step 5. More patience means fewer dropped events and later results: no setting gives both. One stream can serve both teams: a 2-minute board for operations and a nightly recompute for finance. Streaming into tables is a topic of its own for later. Kafka, Redpanda and cloud services keep the log; Flink and Spark Structured Streaming run the same ideas; withWatermark in Spark is exactly this rule.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Crash plus repeats: what gets the count right?</h2>
+  <div class="quiz">
+    <p class="lead">Your consumer saves after the work, so it never loses events. Phones also resend. The count is 117 too high. What fixes it?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>Count each <code>event_id</code> once in the output</div>
+      <div class="opt" data-k="B">Save the offset before the work instead</div>
+      <div class="opt" data-k="C">Add more partitions to the log</div>
+      <div class="opt" data-k="D">Raise the allowed lateness to 60 minutes</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> An idempotent output makes crash repeats and phone repeats harmless. Saving first would lose events, and more partitions or lateness don’t touch duplicates.</div>
+  </div>
+  <aside class="notes">Answer A. 5,374 against 5,257 in the lab.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 4.3">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 4.3 · 25 min</div>
+      <h2>Streaming: a log, a crash and a watermark</h2>
+      <p class="lead small">Build a small log, crash a consumer, make its count idempotent, then close windows with a watermark in plain Python.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_3_streaming_fundamentals.ipynb" target="_blank" rel="noopener">labs/D4_3_streaming_fundamentals.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Write the events into a log with offsets <span class="min">4 min</span></li>
+      <li>Consume, crash and count too many <span class="min">5 min</span></li>
+      <li>Make the count idempotent <span class="min">6 min</span></li>
+      <li>Event time vs. processing time <span class="min">4 min</span></li>
+      <li>Windows and a watermark: measure the trade-off <span class="min">6 min</span></li>
+      <li class="stretch">✱ Stretch · Replay the log from offset 0 with a new reader</li>
+    </ul>
+  </div>
+  <aside class="notes">No Kafka needed: everything is plain Python, so you see the ideas. Exercises are four lines, one line and two lines. Common failure in exercise 3: forgetting that a window ends at its start plus 15 minutes. Point out that V.watermark's two panels are the same hour at different lateness. Capstone option 3 can reuse stream_windows.</aside>
+</section>
+
+<section class="slide section" data-session="S4 · Governance + capstone kickoff">
+  <div class="kicker">Session 4</div>
+  <h1>Governance + capstone kickoff</h1>
+  <ul class="bullets outcomes">
+    <li>Say what PDPL and the NDMO levels ask of a data engineer</li>
+    <li>Find personal data by content and classify every column</li>
+    <li>Protect it with keyed tokens and masked views, then pick your capstone</li>
+  </ul>
+  <div class="sess-no">04</div>
+  <aside class="notes">The rules apply to every stage of the platform. This is the engineering view, not legal advice. The last slides of this session launch the capstone.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Compliance asks: who may see Khalid’s national ID?</h2>
+  <p class="lead small">His row in <code>raw.customers</code>, exactly as the app stores it.</p>
+  <div class="board"><div class="label tbl mono" data-id="k-row" style="left:0px;top:0px;width:780px"><div class="t-title">customer 107371<span class="src">raw.customers</span></div><div class="t-row h" style="grid-template-columns:190px 1fr"><span>column</span><span>value</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>customer_id</span><span>107371</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>full_name</span><span><span dir="rtl">خالد التميمي</span></span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>email</span><span>khalid.48@hotmail.com</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>mobile</span><span>966530730536</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>national_id</span><span>1278681299</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>iban</span><span>null</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>city</span><span>Riyadh</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>district</span><span>Al Malqa</span></div></div><figure class="figure" data-id="f-cust" style="left:900px;top:20px;width:200px;margin:0"><div class="art customer" aria-hidden="true"></div><figcaption>Khalid</figcaption><p class="detail">signed up 26 September</p></figure><figure class="figure" data-id="f-cmp" style="left:1200px;top:20px;width:200px;margin:0"><div class="art steward" aria-hidden="true"></div><figcaption>Compliance</figcaption><p class="detail">“Who may see it?”</p></figure></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Personal data</b>: anything that identifies a person. <b>PII</b> is the everyday name for it. Khalid’s row has plenty.</div>
+  <aside class="notes">Khalid signed up on 26 September and placed order 5043883 two days later. The row has a name, an email, a mobile and a national ID; his IBAN is empty. City and district identify nobody alone, but next to a name they do. Support may need his mobile, Finance needs none of it, and an analyst counting customers needs to tell people apart without knowing who they are.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Khalid’s ID is in six places already</h2>
+  <p class="lead small">Each layer copied the whole row. Backups and exports would add more.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-d4gv-1-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-d4gv-1-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-d4gv-1-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-d4gv-1-em)" data-id="w-cp0" d="M204 70 L236 70"/><path class="wire em" marker-end="url(#arr-d4gv-1-em)" data-id="w-cp1" d="M444 70 L476 70"/><path class="wire em" marker-end="url(#arr-d4gv-1-em)" data-id="w-cp2" d="M684 70 L716 70"/><path class="wire em" marker-end="url(#arr-d4gv-1-em)" data-id="w-cp3" d="M924 70 L956 70"/><path class="wire em" marker-end="url(#arr-d4gv-1-em)" data-id="w-cp4" d="M1164 70 L1196 70"/></svg><div class="label rec wrong" data-id="cp0" style="left:0px;top:30px;width:200px"><b>App database</b><span>customers</span></div><div class="label rec wrong" data-id="cp1" style="left:240px;top:30px;width:200px"><b>CDC feed</b><span>the c event, with after</span></div><div class="label rec wrong" data-id="cp2" style="left:480px;top:30px;width:200px"><b>raw.customers</b><span>Day 2</span></div><div class="label rec wrong" data-id="cp3" style="left:720px;top:30px;width:200px"><b>stg_customers</b><span>dbt · all of it</span></div><div class="label rec wrong" data-id="cp4" style="left:960px;top:30px;width:200px"><b>SCD2 history</b><span>Lab 2.3 · every version</span></div><div class="label rec wrong" data-id="cp5" style="left:1200px;top:30px;width:200px"><b>snapshots</b><span>Iceberg · old versions</span></div><div class="stage-box gold" data-id="dim" style="left:500px;top:180px;width:440px"><h3>dim_customers</h3><p>city, district, signup date<br>no name, mobile or ID</p><span class="tag">Day 3 left the identifiers out</span></div><p class="annotation teal" style="left:0px;top:440px;width:1440px">The gold layer kept them out by design. Every layer before it did not.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> Copies multiply. Every place that holds the ID must protect it, and must forget it on request.</div>
+  <aside class="notes">Trace one value: 1278681299 entered in the app, travelled in the CDC feed's after image, landed in raw.customers and stg_customers, and in any SCD2 history built from the feed. If the table lives in Iceberg, old snapshots hold it too. The dimension in gold deliberately has no identifiers: that's data minimization by design. Ask which of these copies an analyst can read today.</aside>
+</section>
+
+<section class="slide top">
+  <h2>PDPL and NDMO, from a data engineer’s seat</h2>
+  <p class="lead small">The Personal Data Protection Law: in force since September 2023, fully enforced since September 2024. SDAIA is the regulator.</p>
+  <div class="board"><table class="mapping compact"><thead><tr><th>The rule says</th><th>The pipeline does</th></tr></thead><tbody><tr><td>know what personal data you hold</td><td>PII discovery, a catalog with a classification per column</td></tr><tr><td>collect and show only what the purpose needs</td><td>pseudonyms for analysts, masked views per role, gold without identifiers</td></tr><tr><td>honour data subjects’ rights: access, correction, erasure</td><td>a deletion that reaches every copy, verified</td></tr><tr><td>keep transfers outside the Kingdom under control</td><td>storage region, backups and LLM endpoints inside approved locations</td></tr><tr><td>be able to show it</td><td>lineage, access logs, retention jobs</td></tr></tbody></table></div>
+  <div class="callout tip"><b>Takeaway.</b> Each principle becomes a feature you can build, test and show to an auditor.</div>
+  <aside class="notes">PDPL covers lawful purpose, data minimization, data subjects' rights (access, correction, destruction), breach notification and conditions on transfers outside the Kingdom. The NDMO (National Data Management Office) standards add governance roles, a catalog, and the classification levels on the next board. Your data protection officer and your organization's policies decide what applies. Today's lab covers the first two rows.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Four levels: Top Secret, Secret, Restricted, Public</h2>
+  <p class="lead small">The NDMO classification. Lab 4.4’s illustrative Qafila policy puts Khalid’s columns here.</p>
+  <div class="board"><div class="label tbl mono" data-id="k-row" style="left:0px;top:0px;width:780px"><div class="t-title">customer 107371<span class="src">raw.customers</span></div><div class="t-row h" style="grid-template-columns:190px 1fr 150px"><span>column</span><span>value</span><span>level</span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>customer_id</span><span>107371</span><span><em class="o">Restricted</em></span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>full_name</span><span><span dir="rtl">خالد التميمي</span></span><span><em class="o">Restricted</em></span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>email</span><span>khalid.48@hotmail.com</span><span><em class="o">Restricted</em></span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>mobile</span><span>966530730536</span><span><em class="o">Restricted</em></span></div><div class="t-row unk" style="grid-template-columns:190px 1fr 150px"><span>national_id</span><span>1278681299</span><span><em class="k bad">Secret</em></span></div><div class="t-row unk" style="grid-template-columns:190px 1fr 150px"><span>iban</span><span>null</span><span><em class="k bad">Secret</em></span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>city</span><span>Riyadh</span><span><em class="o">Restricted</em></span></div><div class="t-row " style="grid-template-columns:190px 1fr 150px"><span>district</span><span>Al Malqa</span><span><em class="o">Restricted</em></span></div></div><div class="label tbl mono" data-id="levels" style="left:860px;top:0px;width:580px"><div class="t-title">Qafila’s policy<span class="src">Lab 4.4</span></div><div class="t-row h" style="grid-template-columns:170px 1fr"><span>level</span><span>handling</span></div><div class="t-row " style="grid-template-columns:170px 1fr"><span><em class="k bad">Secret</em></span><span><span style="font-family:var(--sans)">pseudonymize; raw value only in a vault</span></span></div><div class="t-row " style="grid-template-columns:170px 1fr"><span><em class="o">Restricted</em></span><span><span style="font-family:var(--sans)">mask for everyone except support</span></span></div><div class="t-row " style="grid-template-columns:170px 1fr"><span><em class="k">Public</em></span><span><span style="font-family:var(--sans)">no personal data at all</span></span></div></div><p class="annotation teal" style="left:860px;top:250px;width:580px">city next to a name identifies someone: Restricted “by association”.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> Classification drives handling: the level decides who may read a column, and in what form.</div>
+  <aside class="notes">The national ID, and an IBAN when present, are Secret. The name, email and mobile are Restricted. Every other column of a table that holds personal data is Restricted too, because combined with the rest it identifies someone. Only tables without personal data can be Public. The policy is the lab's example: a real one comes from your organization and is reviewed like code. The lab's catalog ends at 11 Restricted and 3 Secret columns across two tables.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Column names lie</h2>
+  <p class="lead small">Personal data also hides in free text. Two of Lab 4.4’s 400 support notes:</p>
+  <div class="board"><div class="label rec chg" data-id="note1" style="left:0px;top:10px;width:1000px"><b>support_notes · note</b><span>Refund to SA7115564106233328540257 requested; identity checked against ID 1986655445.</span></div><div class="label rec chg" data-id="note2" style="left:0px;top:110px;width:1000px"><b>support_notes · note</b><span>Customer called from +966 56 474 3974 about a late order.</span></div><div class="label reason" data-id="n-lie" style="left:0px;top:250px;width:1000px">A column called <b>note</b> holds IBANs, national IDs, mobiles and emails.</div><figure class="figure" data-id="f-q" style="left:1120px;top:0px;width:250px;margin:0"><div class="art quality" aria-hidden="true"></div><figcaption>Scan the values</figcaption></figure></div>
+  <div class="callout tip"><b>Takeaway.</b> Discover by content: scan the values, not the column names.</div>
+  <aside class="notes">The notes are generated from real course customers, typed the way agents type: a refund to an IBAN, an identity check, a callback number. Columns named notes, ref or extra_1 are where catalogs miss personal data. Discovery tools (Presidio, cloud scanners, catalog classifiers) sample each text column and look for patterns.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A regex finds too much</h2>
+  <p class="lead small">Ten digits starting with 1 or 2 look like a national ID. So do the couriers’ tracking numbers.</p>
+  <div class="board"><div class="label rec " data-id="cand" style="left:0px;top:10px;width:640px"><b>\b[12]\d{9}\b · in the 400 notes</b><span>83 candidates</span></div><div class="label rec copy" data-id="valid" style="left:0px;top:110px;width:640px"><b>… that pass the Luhn check</b><span>77 national IDs</span></div><div class="label rec wrong" data-id="fp" style="left:0px;top:210px;width:640px"><b>… that don’t</b><span>6 tracking numbers</span></div><p class="annotation teal" style="left:760px;top:40px;width:680px">A check digit tells a real ID from a random 10-digit number.</p><p class="annotation " style="left:760px;top:170px;width:680px">IBANs have one too: ISO 13616, mod 97.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> A pattern finds candidates, and a <b>checksum</b> confirms them. Fewer false alarms, more trust in the inventory.</div>
+  <aside class="notes">Real counts from Lab 4.4 step 2: 83 candidates, 77 pass, 6 are tracking numbers. Saudi IDs and Iqama numbers end with a Luhn check digit: from the right, double every second digit, subtract 9 from anything above 9, add everything up, and the total divides by 10. Khalid's sums to 50. Some personal data has no pattern at all, such as names: declare it in the catalog instead.</aside>
+</section>
+
+<section class="slide top">
+  <h2>A plain hash re-identifies everyone</h2>
+  <p class="lead small">Lab 4.4’s attacker holds 500 leaked IDs and the “anonymous” hashed table.</p>
+  <div class="board"><div class="label rec wrong" data-id="sha" style="left:0px;top:10px;width:700px"><b>sha256("1278681299")</b><span>anyone can compute this</span><i>ed064fa5…</i></div><div class="label rec copy" data-id="hmac" style="left:0px;top:120px;width:700px"><b>hmac(key, "1278681299")</b><span>only whoever holds the key</span><i>6fb6a0bd…</i></div><div class="label answer" data-id="n-sha" style="left:780px;top:10px;width:660px"><b>500 of 500</b>re-identified from plain hashes</div><div class="label answer" data-id="n-hmac" style="left:780px;top:120px;width:660px"><b>0 of 500</b>without the key</div><div class="label answer" data-id="n-58" style="left:0px;top:260px;width:1100px"><b>58</b>people with two accounts: still found, from tokens alone</div><p class="annotation teal" style="left:0px;top:400px;width:1440px">The key lives in a secret manager. Rotate it and every token changes.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Pseudonymize</b>: swap an ID for a token. A <b>keyed hash</b> (HMAC) makes one nobody can recompute without the key.</div>
+  <aside class="notes">Real results from Lab 4.4 step 4: 7,442 accounts belong to 7,384 people. With plain SHA-256 the attacker matches all 500 leaked IDs; with HMAC-SHA256 and a secret key, none. The tokens still find the 58 people with two accounts. Pseudonymized data is still personal data under PDPL: whoever holds the key can match it. True anonymization is a much higher bar.</aside>
+</section>
+
+<section class="slide top">
+  <h2>Each role reads its own view of Khalid</h2>
+  <p class="lead small">Nobody reads <code>raw.customers</code> directly. Each role gets a view with only what its job needs.</p>
+  <div class="board"><div class="label tbl mono" data-id="view0" style="left:0px;top:0px;width:700px"><div class="t-title">support.customers<span class="src">support</span></div><div class="t-row h" style="grid-template-columns:190px 1fr"><span>column</span><span>value</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>full_name</span><span><span dir="rtl">خالد التميمي</span></span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>email</span><span>khalid.48@hotmail.com</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>mobile</span><span>+9665•••••36</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>city</span><span>Riyadh</span></div></div><div class="label tbl mono" data-id="view1" style="left:740px;top:0px;width:700px"><div class="t-title">analyst.customers<span class="src">analysts</span></div><div class="t-row h" style="grid-template-columns:190px 1fr"><span>column</span><span>value</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>person_token</span><span>6fb6a0bdfde478b9d8aa</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>city</span><span>Riyadh</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>district</span><span>Al Malqa</span></div><div class="t-row " style="grid-template-columns:190px 1fr"><span>email_domain</span><span>hotmail.com</span></div></div><div class="label rec wrong" data-id="blocked" style="left:0px;top:260px;width:1440px"><b>analyst: SELECT national_id FROM main.customers</b><span>PermissionError: analyst may not read main</span><i>blocked</i></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Least privilege</b>: grants on views, never on the raw table. Warehouse masking policies apply in every tool.</div>
+  <aside class="notes">Lab 4.4 step 5. Support sees the name and email to talk to Khalid, but only the last two digits of his mobile. Analysts see a person token, city, district and email domain: enough to count people, nothing to contact or identify him. DuckDB has no column security, so the lab's toy access check refuses any query outside the role's schema, and the PII scanner finds nothing in the analyst view. A view is a convention if a tool can go around it; a warehouse policy on the column can't be bypassed.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Is a SHA-256 of the ID anonymous?</h2>
+  <div class="quiz">
+    <p class="lead">A teammate replaces every national ID with its plain SHA-256 and calls the table anonymous. Is it?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Yes: a hash can’t be reversed</div>
+      <div class="opt" data-k="B">Yes, as long as the table stays in the warehouse</div>
+      <div class="opt" data-k="C" data-ok>No: anyone with a list of IDs can hash them and match</div>
+      <div class="opt" data-k="D">No: SHA-256 is too slow for that many rows</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> That’s 500 of 500 in the lab. A key stops the matching, and even then the tokens are still personal data under PDPL.</div>
+  </div>
+  <aside class="notes">Answer C. Hashes can't be reversed, but they can be recomputed. National IDs are a small enough space that an attacker wouldn't even need a leaked list.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 4.4">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 4.4 · 25 min</div>
+      <h2>Find it, label it, protect it</h2>
+      <p class="lead small">Scan values for PII, classify every column, swap IDs for keyed tokens and build a view per role.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D4_4_governance_privacy.ipynb" target="_blank" rel="noopener">labs/D4_4_governance_privacy.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>Look at where personal data hides <span class="min">3 min</span></li>
+      <li>Find PII by content: a pattern plus a checksum <span class="min">6 min</span></li>
+      <li>Classify every column <span class="min">4 min</span></li>
+      <li>Pseudonymize with a keyed hash <span class="min">6 min</span></li>
+      <li>Build a masked view per role <span class="min">6 min</span></li>
+      <li class="stretch">✱ Stretch · Redact free-text notes before they leave the platform</li>
+    </ul>
+  </div>
+  <aside class="notes">Exercises are one line, one line and about four lines of SQL. Stay on time so the kickoff gets its full slot: if the room runs late, stop at step 4 and do step 5 as a live demo. Common failure in exercise 3: SELECT * in the view leaks everything, and the scanner check says so.</aside>
+</section>
+
+<section class="slide top" data-label="Capstone kickoff">
+  <div class="kicker">Capstone kickoff</div>
+  <h2>Three options: pick one</h2>
+  <div class="cols cols-3 mt">
+    <div class="card c-teal"><div class="art house" style="width:130px"></div><h4>1 · Qafila Lakehouse</h4><p class="small mb0">A batch platform from raw data to governed marts, plus an operations view.</p></div>
+    <div class="card c-cyan"><div class="art analyst" style="width:130px"></div><h4>2 · Open Data Platform</h4><p class="small mb0">Saudi open datasets, with tests and a small dashboard.</p></div>
+    <div class="card c-coral"><div class="art courier" style="width:130px"></div><h4>3 · Real-time Operations Monitor</h4><p class="small mb0">Replayed courier events, with event-time KPIs and SLA alerts.</p></div>
+  </div>
+  <div class="callout tip mt"><b>Choosing.</b> Option 1 reuses the most from the labs. Option 2 brings your own data. Option 3 builds on Lab 4.3. An <b>SLA</b> is a promise with a number, like Qafila’s 30 minutes.</div>
+  <aside class="notes">Give them a minute to react. Option 1 has a working start in the starter kit: labs/capstone/pipeline.py. Option 2 needs a source you are allowed to use: the national open data portal or GASTAT releases. Option 3 replays labs/data/raw/events as a stream. An SLA is a promise with a number: here, 30 minutes from order to door.</aside>
+</section>
+
+<section class="slide top" data-label="Capstone kickoff">
+  <div class="kicker">Capstone kickoff</div>
+  <h2>Five minimum requirements</h2>
+  <div class="art-row mt">
+    <ol class="bullets" style="flex:1">
+      <li><b>Two source types</b> and <b>one command</b> end to end</li>
+      <li>A <b>layered model</b> with its <b>grain written down</b></li>
+      <li><b>Incremental loads</b> that are safe to re-run</li>
+      <li><b>8+ data tests</b>, one catching a real problem</li>
+      <li><b>Orchestration</b> plus a short <b>governance note</b></li>
+    </ol>
+    <div class="art engineer" style="width:230px"></div>
+  </div>
+  <div class="callout note mt"><b>Each one is a lab you’ve done.</b> Days 2 to 4 cover them all: start from your notebooks.</div>
+  <aside class="notes">Map each back: sources from Lab 2.1 and 2.2; layers and grain from Lab 3.1 and 3.2; safe re-runs from Lab 2.1 and 2.3; tests from Lab 3.3; orchestration from Lab 3.4; the governance note from Lab 4.4. A real problem means a test that fails on actual data and that you can show, not a test written to pass. Spark, Iceberg and streaming are allowed but aren't required, except that option 3 is built on events.</aside>
+</section>
+
+<section class="slide top" data-label="Capstone kickoff">
+  <div class="kicker">Capstone kickoff</div>
+  <h2>How it works</h2>
+  <div class="cols cols-4 mt">
+    <div class="card c-teal"><div class="art stakeholders" style="width:110px"></div><h4>Teams of 2–3</h4><p class="small mb0">Form yours before you leave the room.</p></div>
+    <div class="card c-cyan"><div class="art files" style="width:110px"></div><h4>Starter kit</h4><p class="small mb0"><code>labs/capstone/</code> holds a working pipeline and a README template.</p></div>
+    <div class="card c-purple"><div class="art app" style="width:110px"></div><h4>Submit</h4><p class="small mb0">A public GitHub repo link, before Day 5 Session 1.</p></div>
+    <div class="card c-coral"><div class="art analyst" style="width:110px"></div><h4>Day 5 talk</h4><p class="small mb0">10 min with a live demo, then 5 min of Q&amp;A.</p></div>
+  </div>
+  <div class="callout warn mt"><b>Keep personal data out</b> of git and out of your slides. Use the labs’ tokens and masks.</div>
+  <aside class="notes">Stay until every team has told you its option and sources. Show the folder labs/capstone/ if there's time: pipeline.py runs once with one command and is a real start for option 1. The rubric is on the course page and is covered at the start of Day 5.</aside>
+</section>
+
+<section class="slide" data-label="Wrap-up">
+  <div class="kicker">Day 4 wrap-up</div>
+  <h2>What you built today</h2>
+  <div class="flow">
+    <div class="step c-teal"><b>Lab 4.1</b>an Iceberg table with time travel</div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>Lab 4.2</b>a Spark job and its plan</div><div class="arrow">→</div>
+    <div class="step c-coral"><b>Lab 4.3</b>a log, windows, a watermark</div><div class="arrow">→</div>
+    <div class="step c-purple"><b>Lab 4.4</b>tokens and masked views</div>
+  </div>
+  <div class="cols cols-3 mt">
+    <div class="card c-teal"><h4>Remember</h4><p class="small mb0">A folder isn’t a table: a table format publishes one complete version, in one step.</p></div>
+    <div class="card c-coral"><h4>Remember</h4><p class="small mb0">Measure before you scale: one machine is usually enough, and batch usually is too.</p></div>
+    <div class="card c-purple"><h4>Remember</h4><p class="small mb0">Every copy of personal data is yours to protect. Find it by content, then tokenize and mask it.</p></div>
+  </div>
+  <aside class="notes">Ask one person per lab for the number they remember: 43,044.75, 61 folders to 1, 5,374 against 5,257, 500 of 500. Then point to the capstone: every requirement is something you did this week.</aside>
+</section>
+
+<section class="slide dark" data-label="Tomorrow">
+  <div class="kicker">Tomorrow</div>
+  <h2>Day 5: your platform, live</h2>
+  <div class="art-row mt">
+    <div class="art house" style="width:190px"></div>
+    <ul class="bullets" style="flex:1">
+      <li>Every team presents: 10 min with a live demo, then 5 min of Q&amp;A</li>
+      <li>Repo link in before Session 1</li>
+      <li>Thanks for today: see you at the demos</li>
+    </ul>
+  </div>
+  <aside class="notes">Remind teams that a recorded backup of the demo saves a talk when the network fails. Unfinished labs aren't required for the capstone. Close here.</aside>
+</section>
+
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

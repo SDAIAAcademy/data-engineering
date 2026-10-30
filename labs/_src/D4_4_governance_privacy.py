@@ -1,25 +1,22 @@
 # %% [markdown]
-# # Lab 4.3 · Governance, security and privacy
+# # Lab 4.4 · Find it, label it, protect it
 #
-# Day 4 · Session 3 (Governance, security & privacy) · 25 min. Qafila handles Saudi customers' personal data, so the
-# **Personal Data Protection Law (PDPL)** applies, and government partners expect data classified by the
-# **NDMO** levels. In this lab you build the technical half of that:
-# - **discover** personal data by content, not by column name (national ID / Iqama, IBAN, mobile, email);
-# - **classify** every column;
-# - **pseudonymize** identifiers so analysts can still join and deduplicate;
-# - give each role a **masked view**;
-# - honour a **right-to-erasure** request on an Iceberg table, and prove the data is gone.
+# Day 4 · Session 4 · 25 min. Qafila holds Saudi customers' personal data, so the **Personal Data Protection Law (PDPL)**
+# applies. You'll build the data engineer's half of that:
+# - find personal data by what the values look like, not by column names;
+# - give every column a classification level;
+# - replace IDs with tokens, and give each role its own masked view.
 #
 # **Tasks**
-# - [ ] 1 · Find personal data by content: validators, not just regexes (6')
-# - [ ] 2 · Classify every column (4')
-# - [ ] 3 · Pseudonymize with a keyed hash (5')
-# - [ ] 4 · Masked views per role (5')
-# - [ ] 5 · Right to erasure on an Iceberg table, verified (5')
-# - [ ] ✱ Stretch · Redact free-text notes before they reach an LLM
+# - [ ] 1 · Look at where personal data hides (3')
+# - [ ] 2 · Find PII by content: a pattern plus a checksum (6')
+# - [ ] 3 · Classify every column (4')
+# - [ ] 4 · Pseudonymize with a keyed hash (6')
+# - [ ] 5 · Build a masked view per role (6')
+# - [ ] ✱ Stretch · Redact free-text notes before they leave the platform
 #
-# ⚖️ This is an engineering exercise, not legal advice: classification levels and retention rules come from your
-# organization's policies and its data protection officer.
+# ⚖️ This is an engineering exercise, not legal advice. Levels and rules come from your organization's policies and its data
+# protection officer.
 
 # %%
 import os, sys, subprocess
@@ -55,7 +52,7 @@ con = duckdb.connect()
 con.sql(f"ATTACH '{U.build_warehouse().as_posix()}' AS wh (READ_ONLY)")
 con.sql("CREATE TABLE customers AS SELECT * EXCLUDE (_loaded_at) FROM wh.raw.customers")
 
-# Customer-support notes: free text typed by agents. Personal data hides in places like this.
+# Customer-support notes: free text typed by agents.
 rng = random.Random(7)
 cust = con.sql("SELECT customer_id, email, mobile, national_id, iban FROM customers WHERE iban IS NOT NULL").fetchall()
 templates = [
@@ -74,314 +71,281 @@ for i in range(400):
         tracking="".join(str(rng.randint(0, 9)) for _ in range(10)))))
 con.sql("CREATE TABLE support_notes (note_id INT, customer_id BIGINT, note VARCHAR)")
 con.executemany("INSERT INTO support_notes VALUES (?, ?, ?)", notes)
-con.sql("SELECT * FROM support_notes LIMIT 6").df()
+print(f"customers: {con.sql('SELECT count(*) FROM customers').fetchall()[0][0]:,} | support notes: {len(notes)}")
 
 # %% [markdown]
-# ## 1 · Find personal data by content: validators, not just regexes (6')
+# ## 1 · Look at where personal data hides (3')
 #
-# Column names lie (`ref`, `notes`, `extra_1`), so discovery tools scan **values**. A regex finds candidates; a **checksum**
-# confirms them and removes false positives such as the 10-digit tracking numbers in the notes.
-# - Saudi **national ID / Iqama**: 10 digits, first digit `1` (citizen) or `2` (resident), valid **Luhn** check digit.
-#   Luhn: from the right, double every second digit (the 2nd, 4th, ...), subtract 9 from results above 9, sum all digits:
-#   the total must be divisible by 10.
-# - Saudi **IBAN**: `SA` + 22 characters. Move the first 4 characters to the end, replace letters by numbers (A=10 ... Z=35):
-#   the resulting integer mod 97 must equal 1 (ISO 13616).
-#
-# ✏️ **Exercise** · Write `is_saudi_id(s)` and `is_saudi_iban(s)`.
+# **Personal data** is anything that identifies a person. **PII** (personally identifiable information) is the everyday name
+# for it. Here's Khalid's row, then a few support notes. Run the cell.
 
 # %%
-# BEGIN SOLUTION
+print(con.sql("SELECT customer_id, full_name, email, mobile, national_id, iban, city, district FROM customers WHERE customer_id = 107371").df().T.to_string(header=False))
+con.sql("SELECT note FROM support_notes LIMIT 6").df()
+
+# %% [markdown]
+# 🔍 A column called `note` holds IDs, IBANs, mobiles and emails. A check of column names would mark it as harmless.
+# So discovery tools read the **values**.
+#
+# ## 2 · Find PII by content: a pattern plus a checksum (6')
+#
+# Saudi national IDs (and Iqama numbers) have 10 digits, start with `1` or `2`, and end in a **check digit**: from the right, double
+# every second digit, subtract 9 from anything above 9, add everything up, and the total must divide by 10 (the **Luhn** check).
+# A pattern finds **candidates**, and the checksum **confirms** them. The check is written for you.
+#
+# ✏️ **Exercise 1** · Write `find_national_ids(text)`: every 10-digit candidate in `text` that passes `is_saudi_id`.
+#
+# *Hint:* `re.findall(ID_PATTERN, text)` gives the candidates. A list comprehension with `if is_saudi_id(c)` keeps the real ones. One line.
+
+# %%
+ID_PATTERN = r"\b[12]\d{9}\b"
+
 def is_saudi_id(s: str) -> bool:
-    if not (len(s) == 10 and s.isdigit() and s[0] in "12"):
-        return False
     total = 0
     for i, ch in enumerate(reversed(s)):
-        d = int(ch)
-        if i % 2 == 1:
-            d *= 2
-            if d > 9:
-                d -= 9
-        total += d
-    return total % 10 == 0
+        d = int(ch) * (2 if i % 2 == 1 else 1)
+        total += d - 9 if d > 9 else d
+    return len(s) == 10 and s[0] in "12" and total % 10 == 0
 
-def is_saudi_iban(s: str) -> bool:
-    s = s.replace(" ", "").upper()
-    if not re.fullmatch(r"SA\d{22}", s):
-        return False
-    rearranged = s[4:] + s[:4]
-    return int("".join(str(int(c, 36)) for c in rearranged)) % 97 == 1
-# END SOLUTION
-
-U.check(is_saudi_id(cust[0][3]) and not is_saudi_id("1234567890"), "national IDs pass Luhn; random digits don't")
-iban = cust[0][4]
-U.check(is_saudi_iban(iban) and not is_saudi_iban(iban[:-1] + str((int(iban[-1]) + 1) % 10)), "one wrong digit breaks the IBAN checksum")
+def find_national_ids(text: str) -> list:
+    # BEGIN SOLUTION
+    return [c for c in re.findall(ID_PATTERN, text) if is_saudi_id(c)]
+    # END SOLUTION
 
 # %%
-DETECTORS = {   # type -> (candidate regex, validator)
-    "national_id": (r"\b[12]\d{9}\b", is_saudi_id),
+try:
+    find_national_ids("x")
+except NotImplementedError:
+    print("⏭️ Exercise 1 not done yet. Expected: fewer real IDs than candidates. Using the reference.")
+    def find_national_ids(text):
+        return [c for c in re.findall(ID_PATTERN, text) if is_saudi_id(c)]
+
+candidates = sum(len(re.findall(ID_PATTERN, n)) for _, _, n in notes)
+real_ids = sum(len(find_national_ids(n)) for _, _, n in notes)
+print(f"10-digit candidates in the notes: {candidates} | real national IDs: {real_ids} | false alarms removed: {candidates - real_ids}")
+U.check(real_ids < candidates, "the check digit removed the tracking numbers")
+U.check(find_national_ids("ID 1278681299, tracking 1234567890") == ["1278681299"], "Khalid's ID passes; a random number doesn't")
+
+# %% [markdown]
+# Now the same idea for four kinds of PII across every text column. IBANs have a checksum too (ISO 13616: rearrange, then the number
+# mod 97 must be 1). Mobiles and emails only have patterns. Run the cell.
+
+# %%
+def is_saudi_iban(s: str) -> bool:
+    return int("".join(str(int(c, 36)) for c in s[4:] + s[:4])) % 97 == 1
+
+DETECTORS = {   # type -> (pattern, confirm)
+    "national_id": (ID_PATTERN, is_saudi_id),
     "iban":        (r"\bSA\d{22}\b", is_saudi_iban),
-    "mobile":      (r"(?<![\w+])(?:\+?966|0)\s?5\d(?:\s?\d){7}(?!\d)", lambda s: True),   # not inside longer numbers
+    "mobile":      (r"(?<![\w+])(?:\+?966|0)\s?5\d(?:\s?\d){7}(?!\d)", lambda s: True),
     "email":       (r"[\w.+-]+@[\w-]+\.[\w.]+", lambda s: True),
 }
 
 def find_pii(text: str) -> dict:
-    """{pii type: [matches]} for one value; candidates must pass their validator."""
+    """{pii type: [matches]} for one value."""
     found = {}
-    for kind, (pattern, valid) in DETECTORS.items():
-        hits = [m for m in re.findall(pattern, text or "") if valid(m)]
+    for kind, (pattern, confirm) in DETECTORS.items():
+        hits = [m for m in re.findall(pattern, text or "") if confirm(m)]
         if hits:
             found[kind] = hits
     return found
 
 def scan_table(table: str, sample: int = 2000) -> pd.DataFrame:
-    """For each text column: share of sampled values containing each PII type."""
+    """For each text column: the share of sampled values containing each type of PII."""
     cols = [r[0] for r in con.sql(f"DESCRIBE {table}").fetchall() if r[1] == "VARCHAR"]
     rows = []
     for col in cols:
         values = [v for (v,) in con.sql(f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL USING SAMPLE {sample} ROWS (reservoir, 1)").fetchall()]
-        hits = pd.Series([k for v in values for k in find_pii(str(v))]).value_counts()
+        hits = pd.Series([k for v in values for k in find_pii(str(v))], dtype=str).value_counts()
         for kind, n in hits.items():
             rows.append({"table": table, "column": col, "pii": kind, "share": round(n / len(values), 3)})
     return pd.DataFrame(rows)
 
 inventory = pd.concat([scan_table("customers"), scan_table("support_notes")], ignore_index=True)
+U.check(set(inventory[inventory.table == "support_notes"].pii) == {"national_id", "iban", "mobile", "email"}, "all four types found in free text")
 inventory
 
-# %%
-naive_ids = sum(len(re.findall(r"\b[12]\d{9}\b", n)) for _, _, n in notes)
-real_ids = sum(len(find_pii(n).get("national_id", [])) for _, _, n in notes)
-print(f"10-digit candidates in notes: {naive_ids} | valid national IDs: {real_ids}")
-U.check(set(inventory[inventory.table == "support_notes"].pii) == {"national_id", "iban", "mobile", "email"},
-        "all four PII types found hiding in free text")
-U.check(real_ids < naive_ids, "the Luhn check removes false positives (tracking numbers)")
-
 # %% [markdown]
-# ## 2 · Classify every column (4')
+# ## 3 · Classify every column (4')
 #
-# Saudi Arabia's **NDMO** data classification uses four levels: **Top Secret, Secret, Restricted, Public**. Below is an
-# *illustrative* Qafila policy that maps what we found to a level and a handling rule.
+# Saudi Arabia's **NDMO** (National Data Management Office) uses four levels: **Top Secret, Secret, Restricted, Public**. Below is an
+# *illustrative* Qafila policy. A column takes the highest level among what it holds. A name has no pattern, so we declare it. A column
+# with no PII of its own, in a table that holds personal data, is still Restricted: a `city` next to a name identifies someone. Run the cell.
 
 # %%
 LEVELS = ["Public", "Restricted", "Secret", "Top Secret"]
 POLICY = {   # pii type -> (level, handling)
-    "national_id": ("Secret", "pseudonymize; raw value only in the restricted vault"),
+    "national_id": ("Secret", "pseudonymize; raw value only in a vault"),
     "iban":        ("Secret", "never leaves the payments domain"),
     "mobile":      ("Restricted", "mask for everyone except support"),
     "email":       ("Restricted", "mask for everyone except support"),
     "name":        ("Restricted", "mask outside support"),
 }
-NAME_HINTS = {"full_name": "name"}   # some PII can't be found by pattern: declare it
+DECLARED = {"full_name": "name"}   # some PII can't be found by pattern
 
-# %% [markdown]
-# ✏️ **Exercise** · Build `catalog`: one row per column of `customers` and `support_notes` with `table`, `column`,
-# `pii` (sorted list of PII types from `inventory` plus `NAME_HINTS`), `level` (the **highest** level among them, by
-# `LEVELS` order) and `handling` (of that highest one). A column with no PII of its own in a table that holds personal
-# data is still `"Restricted"` ("personal data by association": `city` next to a name identifies someone); only columns of
-# tables without personal data are `"Public"`.
-
-# %%
-# BEGIN SOLUTION
 rows = []
 for table in ["customers", "support_notes"]:
-    table_has_pii = table in set(inventory.table)
     for (col,) in con.sql(f"SELECT column_name FROM (DESCRIBE {table})").fetchall():
         kinds = sorted(set(inventory[(inventory.table == table) & (inventory.column == col)].pii)
-                       | ({NAME_HINTS[col]} if col in NAME_HINTS else set()))
+                       | ({DECLARED[col]} if col in DECLARED else set()))
         if kinds:
             top = max(kinds, key=lambda k: LEVELS.index(POLICY[k][0]))
             level, handling = POLICY[top]
         else:
-            level, handling = ("Restricted", "personal data by association") if table_has_pii else ("Public", "-")
-        rows.append({"table": table, "column": col, "pii": kinds, "level": level, "handling": handling})
+            level, handling = "Restricted", "personal data by association"
+        rows.append({"table": table, "column": col, "pii": ", ".join(kinds) or "-", "level": level, "handling": handling})
 catalog = pd.DataFrame(rows)
-# END SOLUTION
+lvl = catalog.set_index(["table", "column"]).level
+U.check(lvl["customers", "national_id"] == "Secret", "national IDs are Secret")
+U.check(lvl["support_notes", "note"] == "Secret", "free text takes its most sensitive content's level")
+print(catalog.level.value_counts().to_string())
 catalog
 
-# %%
-lvl = catalog.set_index(["table", "column"]).level
-U.check(lvl["customers", "national_id"] == "Secret" and lvl["customers", "iban"] == "Secret", "IDs and IBANs are Secret")
-U.check(lvl["support_notes", "note"] == "Secret", "free text inherits its most sensitive content")
-U.check((catalog.level != "Public").all(), "nothing in a personal-data table is Public on its own")
-
 # %% [markdown]
-# 🔍 In a real platform these labels become **tags** in the catalog (Unity Catalog, Polaris, DataHub, OpenMetadata) and
-# drive masking and access policies automatically. The classification is code: review it like code.
+# 🔍 Why is `support_notes.note` Secret, when its column name says nothing? What would change if you found an IBAN in `district`?
+# At work these labels are **tags** in a data catalog, and masking policies read them.
 #
-# ## 3 · Pseudonymize with a keyed hash (5')
+# ## 4 · Pseudonymize with a keyed hash (6')
 #
-# Analysts need to count **people**, not accounts (Day 2: 58 people registered twice), without seeing national IDs.
-# Replace each ID by a **token**. A plain SHA-256 isn't enough: anyone with a list of IDs can hash them and match.
+# Analysts need to count **people**, not accounts, without seeing a national ID. So replace each ID with a **token**: the same ID always
+# gives the same token. **A plain hash isn't enough.** Anyone holding a list of IDs can hash them too and match. Run the attack.
 
 # %%
-plain = {hashlib.sha256(nid.encode()).hexdigest(): cid for cid, nid in con.sql("SELECT customer_id, national_id FROM customers").fetchall()}
+plain = {hashlib.sha256(nid.encode()).hexdigest() for (nid,) in con.sql("SELECT national_id FROM customers").fetchall()}
 leaked_list = [nid for (nid,) in con.sql("SELECT national_id FROM customers USING SAMPLE 500 ROWS (reservoir, 3)").fetchall()]
 reidentified = sum(hashlib.sha256(n.encode()).hexdigest() in plain for n in leaked_list)
-print(f"attacker with 500 leaked IDs re-identifies {reidentified} 'anonymous' customers from plain hashes")
+print(f"attacker holding {len(leaked_list)} leaked IDs matches {reidentified} of them in the 'anonymous' plain hashes")
 
 # %% [markdown]
-# ✏️ **Exercise** · Write `pseudonymize(value, key)`: **HMAC-SHA256** of the value with a secret key (`hmac.new(key, msg,
-# hashlib.sha256)`), returned as the first 20 hex characters. Then register it as a DuckDB function `pseudo(VARCHAR)` with
-# the key `PSEUDO_KEY` and count `people` = distinct tokens and `twice` = tokens with more than one account.
+# ✏️ **Exercise 2** · Write `pseudonymize(value, key)`: the **HMAC-SHA256** of `value` under a secret `key`, first 20 hex characters. An HMAC is a hash
+# that also needs the key, so nobody can recompute it without the key.
+#
+# *Hint:* `hmac.new(key, value.encode(), hashlib.sha256).hexdigest()[:20]`. One line.
 
 # %%
 PSEUDO_KEY = os.environ.get("QAFILA_PSEUDO_KEY", "lab-only-key-keep-real-ones-in-a-secret-manager").encode()
 
-# BEGIN SOLUTION
 def pseudonymize(value: str, key: bytes = PSEUDO_KEY) -> str:
+    # BEGIN SOLUTION
     return hmac.new(key, value.encode(), hashlib.sha256).hexdigest()[:20]
+    # END SOLUTION
+
+# %%
+try:
+    pseudonymize("x")
+except NotImplementedError:
+    print("⏭️ Exercise 2 not done yet. Expected: 58 people with two accounts, 0 leaked IDs matched. Using the reference.")
+    def pseudonymize(value, key=PSEUDO_KEY):
+        return hmac.new(key, value.encode(), hashlib.sha256).hexdigest()[:20]
 
 con.create_function("pseudo", lambda v: pseudonymize(v), ["VARCHAR"], "VARCHAR")
-people, twice = con.sql("""
-    SELECT count(DISTINCT t), count(DISTINCT t) FILTER (WHERE n > 1)
-    FROM (SELECT pseudo(national_id) AS t, count(*) OVER (PARTITION BY pseudo(national_id)) AS n FROM customers)
-""").fetchall()[0]
-# END SOLUTION
-accounts = con.sql("SELECT count(*) FROM customers").fetchall()[0][0]
-print(f"{accounts:,} accounts, {people:,} people, {twice} people with more than one account")
-U.check(twice == 58, "the 58 duplicate people are still detectable, without seeing a single ID")
-U.check(pseudonymize("1000000008") == pseudonymize("1000000008") != pseudonymize("1000000008", b"other-key"), "stable per key")
-U.check(sum(pseudonymize(n) in plain for n in leaked_list) == 0, "without the key, the leaked list matches nothing")
+accounts, people = con.sql("SELECT count(*), count(DISTINCT pseudo(national_id)) FROM customers").fetchall()[0]
+twice = con.sql("SELECT count(*) FROM (SELECT pseudo(national_id) FROM customers GROUP BY 1 HAVING count(*) > 1)").fetchall()[0][0]
+matched = sum(pseudonymize(n) in plain for n in leaked_list)
+print(f"{accounts:,} accounts | {people:,} people | {twice} people with two accounts | leaked IDs matched without the key: {matched}")
+print("Khalid's token:", pseudonymize("1278681299"))
+U.check(twice == 58, "the 58 people with two accounts still show up, with no ID in sight")
+U.check(matched == 0, "without the key, the leaked list matches nothing")
 
 # %% [markdown]
-# 🔍 Pseudonymized data is **still personal data** under PDPL (with the key, it's reversible by matching). It lowers risk
-# and is the right default for analytics; true **anonymization** (aggregation, k-anonymity, differential privacy) is a
-# much higher bar. Rotate the key and you break all joins: store it in a secret manager, version it.
+# 🔍 Pseudonymized data is **still personal data** under PDPL: whoever holds the key can match it. It lowers the risk and it's the right
+# default for analytics. The key belongs in a secret manager, never in the repo. What happens to every join if you change the key?
 #
-# ## 4 · Masked views per role (5')
+# ## 5 · Build a masked view per role (6')
 #
-# DuckDB has no built-in column security, so we model it the classic way: each role may only read its own **views**.
-# Warehouses do the same with grants plus masking policies (Snowflake, BigQuery, Unity Catalog column masks).
+# **Least privilege:** each role reads only what its job needs. DuckDB has no column security, so we model it the classic way: each role
+# may read only its own **views**. Warehouses do the same with grants plus masking policies. Support's view is done.
 
 # %%
 con.sql("CREATE SCHEMA analyst; CREATE SCHEMA support")
 con.sql("""CREATE MACRO mask_mobile(m) AS
            CASE WHEN m IS NULL THEN NULL ELSE '+9665•••••' || right(regexp_replace(m, '\\D', '', 'g'), 2) END""")
-con.sql("CREATE MACRO mask_email(e) AS left(e, 1) || '•••@' || split_part(e, '@', 2)")
 con.sql("""CREATE VIEW support.customers AS
            SELECT customer_id, full_name, email, mask_mobile(mobile) AS mobile, city, district FROM main.customers""")
-GRANTS = {"support": "support", "analyst": "analyst"}
 
 def query_as(role: str, sql_text: str) -> pd.DataFrame:
     """Toy access control: a role may only reference its own schema."""
     referenced = set(re.findall(r"\b(\w+)\.\w+", sql_text))
-    if referenced - {GRANTS[role]}:
-        raise PermissionError(f"{role} may not read {referenced - {GRANTS[role]}}")
+    if referenced - {role}:
+        raise PermissionError(f"{role} may not read {referenced - {role}}")
     return con.sql(sql_text).df()
 
-query_as("support", "SELECT * FROM support.customers LIMIT 3")
+query_as("support", "SELECT * FROM support.customers WHERE customer_id = 107371")
 
 # %% [markdown]
-# ✏️ **Exercise** · Create `analyst.customers`: `person_token` (pseudonymized national ID), `customer_id`, `city`,
-# `district`, `email_domain` (the part after `@`), `created_at`. No names, no mobiles, no IBANs, no raw IDs.
+# ✏️ **Exercise 3** · Write the `SELECT` for `analyst.customers`: `person_token` (`pseudo(national_id)`), `customer_id`, `city`, `district`,
+# `email_domain` (the part after `@`) and `created_at`. No names, no mobiles, no IBANs, no raw IDs.
+#
+# *Hint:* `lower(split_part(email, '@', 2)) AS email_domain`. About four lines of SQL.
 
 # %%
-# BEGIN SOLUTION
-con.sql("""CREATE VIEW analyst.customers AS
-           SELECT pseudo(national_id) AS person_token, customer_id, city, district,
-                  lower(split_part(email, '@', 2)) AS email_domain, created_at
-           FROM main.customers""")
-# END SOLUTION
+def analyst_view_sql():
+    # return """SELECT pseudo(national_id) AS person_token, customer_id, ... FROM main.customers"""
+    # BEGIN SOLUTION
+    return """SELECT pseudo(national_id) AS person_token, customer_id, city, district,
+                     lower(split_part(email, '@', 2)) AS email_domain, created_at
+              FROM main.customers"""
+    # END SOLUTION
+
+# %%
+try:
+    select_sql = analyst_view_sql()
+except NotImplementedError:
+    print("⏭️ Exercise 3 not done yet. Expected: the scanner finds nothing in the view. Using the reference.")
+    select_sql = """SELECT pseudo(national_id) AS person_token, customer_id, city, district,
+                           lower(split_part(email, '@', 2)) AS email_domain, created_at FROM main.customers"""
+con.sql(f"CREATE OR REPLACE VIEW analyst.customers AS {select_sql}")
+
 sample = query_as("analyst", "SELECT * FROM analyst.customers")
-print(query_as("analyst", "SELECT email_domain, count(*) AS n FROM analyst.customers GROUP BY 1 ORDER BY n DESC LIMIT 3"))
-
-# %%
-leaks = sample.map(lambda v: bool(find_pii(str(v)))).sum()
-U.check(int(leaks.sum()) == 0, "the PII scanner finds nothing in the analyst view")
+leaks = int(sample.map(lambda v: bool(find_pii(str(v)))).sum().sum())
+print(sample[sample.customer_id == 107371].T.to_string(header=False))
+U.check(leaks == 0, "the PII scanner finds nothing in the analyst view")
 try:
     query_as("analyst", "SELECT national_id FROM main.customers")
-    U.check(False, "analysts can't read the base table")
+    U.check(False, "analysts must not read the base table")
 except PermissionError as e:
     U.check(True, f"blocked: {e}")
 
 # %% [markdown]
-# ## 5 · Right to erasure on an Iceberg table, verified (5')
+# 🔍 This view works only if every tool goes through it. A warehouse's masking policy sits on the column, so a new tool can't get around it.
+# Real erasure requests go further: they must reach every copy, including old table snapshots and backups.
 #
-# A customer asks Qafila to delete their data (PDPL gives data subjects this right). Our lakehouse keeps customers in
-# Iceberg. Day 3 showed the catch: a delete creates a new snapshot, but **old snapshots and files still hold the row**.
-
-# %%
-import pyarrow.compute as pc
-
-LAKE = U.lab_dir("D4_3", reset=True) / "lakehouse"
-catalog_ice = U.get_catalog(LAKE)
-catalog_ice.create_namespace("crm")
-arrow_customers = con.sql("SELECT * FROM customers").to_arrow_table()
-tbl = catalog_ice.create_table("crm.customers", schema=arrow_customers.schema)
-tbl.append(arrow_customers)
-
-subject = cust[0]                                   # the customer exercising their right
-subject_id, subject_nid = subject[0], subject[3]
-tbl.delete(f"customer_id = {subject_id}")
-first_snapshot = tbl.snapshots()[0].snapshot_id
-still_there = tbl.scan(snapshot_id=first_snapshot, row_filter=f"customer_id = {subject_id}").to_arrow().num_rows
-
-def files_containing(value: str) -> list[str]:
-    """Every Parquet file on disk under the table location whose national_id column contains `value`."""
-    hits = []
-    for f in (LAKE / "crm" / "customers" / "data").rglob("*.parquet"):
-        n = duckdb.sql(f"SELECT count(*) FROM '{f.as_posix()}' WHERE national_id = '{value}'").fetchall()[0][0]
-        if n:
-            hits.append(f.name)
-    return hits
-
-print(f"current table: {tbl.scan(row_filter=f'customer_id = {subject_id}').to_arrow().num_rows} rows | "
-      f"time travel: {still_there} row | files on disk containing the ID: {files_containing(subject_nid)}")
-
-# %% [markdown]
-# ✏️ **Exercise** · Finish the erasure: (1) expire every snapshot except the current one
-# (`tbl.maintenance.expire_snapshots().by_ids([...]).commit()`); (2) delete every data file on disk that no remaining
-# snapshot references (compare the files under `data/` with `tbl.inspect.all_files()`'s `file_path`s), like Spark's
-# `remove_orphan_files`. Then `files_containing(subject_nid)` must be empty.
-
-# %%
-# BEGIN SOLUTION
-current = tbl.current_snapshot().snapshot_id
-old = [s.snapshot_id for s in tbl.snapshots() if s.snapshot_id != current]
-tbl.maintenance.expire_snapshots().by_ids(old).commit()
-tbl = catalog_ice.load_table("crm.customers")
-referenced = {Path(p).resolve() for p in tbl.inspect.all_files().to_pandas().file_path}
-removed = []
-for f in (LAKE / "crm" / "customers" / "data").rglob("*.parquet"):
-    if f.resolve() not in referenced:
-        f.unlink()
-        removed.append(f.name)
-print("removed orphan files:", removed)
-# END SOLUTION
-
-# %%
-U.check(len(tbl.snapshots()) == 1, "time travel to the old version is gone")
-U.check(files_containing(subject_nid) == [], "no file on disk contains the national ID any more")
-U.check(tbl.scan().to_arrow().num_rows == len(arrow_customers) - 1, "everyone else is still there")
-
-# %% [markdown]
-# 🔍 Still on your erasure checklist in real life: **column statistics** in old manifest files (min/max bounds can hold a
-# value), **backups** and replicas, **derived tables** (dbt rebuilds them; incremental models need a delete step), files
-# exported to partners, and the **logs** of the erasure itself (keep the request, not the data). Doing this per request
-# is expensive: many teams batch erasures weekly, or use **crypto-shredding** (encrypt each person's data with their own
-# key, then delete the key).
+# ## ✱ Stretch · Redact free-text notes before they leave the platform
 #
-# ## ✱ Stretch · Redact free-text notes before they reach an LLM
-#
-# Lab 4.4 sends text to a language model. Write `redact(text)` that replaces every detected PII value with a typed
-# placeholder (`[NATIONAL_ID]`, `[IBAN]`, `[MOBILE]`, `[EMAIL]`) and check that `find_pii` finds nothing in the result.
+# Write `redact(text)` that replaces every detected value with a typed placeholder (`[NATIONAL_ID]`, `[IBAN]`, `[MOBILE]`, `[EMAIL]`).
 
 # %%
-# BEGIN SOLUTION
 def redact(text: str) -> str:
+    # BEGIN SOLUTION
     for kind, values in find_pii(text).items():
         for v in values:
             text = text.replace(v, f"[{kind.upper()}]")
     return text
+    # END SOLUTION
 
-redacted = [redact(n) for _, _, n in notes]
-print("\n".join(redacted[:6]))
-U.check(not any(find_pii(t) for t in redacted), "no PII left in any note")
-# END SOLUTION
+try:
+    redacted = [redact(n) for _, _, n in notes]
+    print("\n".join(redacted[:4]))
+    U.check(not any(find_pii(t) for t in redacted), "no PII left in any note")
+except NotImplementedError:
+    print("✱ Optional: write `redact(text)` if you have time.")
 
 # %% [markdown]
 # ## Checkpoint
 #
-# 1. Why validate with a checksum (Luhn, mod-97) instead of a regex alone?
-# 2. Pseudonymized data: is it still personal data under PDPL? What does that mean for where you can store it?
-# 3. Masking in a view vs. masking policies in the warehouse: which is harder to bypass, and why?
-# 4. List everything that must happen, beyond `DELETE`, before you can tell a customer their data is erased.
+# 1. Why confirm with a checksum instead of using a pattern alone?
+#
+# <details><summary>Answer</summary>A pattern also matches tracking numbers and other digits. A check digit tells a real ID from a random number, so the inventory has fewer false alarms and people trust it.</details>
+#
+# 2. Is pseudonymized data still personal data under PDPL?
+#
+# <details><summary>Answer</summary>Yes. Whoever holds the key can match it back to people. It lowers the risk but doesn't remove the duty to protect it.</details>
+#
+# 3. Why is a plain SHA-256 of a national ID not enough?
+#
+# <details><summary>Answer</summary>Anyone with a list of IDs can hash them and match. In this lab that was 500 out of 500. A keyed hash needs a secret the attacker doesn't have.</details>
+#
+# ## Carry forward
+#
+# Your capstone needs a short governance note: the level of every column that holds personal data, and how you protect it. This lab's `catalog`
+# table and `analyst.customers` view are the pattern to copy.

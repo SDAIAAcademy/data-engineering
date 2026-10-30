@@ -1,19 +1,18 @@
 # %% [markdown]
-# # Lab 3.1 · An Iceberg lakehouse with PyIceberg
+# # Lab 4.1 · A table on a folder: Iceberg
 #
-# Day 3 · Session 1 (Open table formats & the lakehouse) · 25 min. What you'll build:
-# - a local **Apache Iceberg** catalog (SQLite for the catalog, a folder standing in for object storage);
-# - a partitioned `qafila.orders` table, loaded in batches, with its metadata tree on disk;
-# - updates, deletes and **time travel**; schema and **partition evolution** without rewriting data;
-# - the same table read by three engines: PyIceberg, DuckDB and Polars.
+# Day 4 · Session 1 · 25 min. What you'll do:
+# - watch a plain folder hand a reader a total that never existed;
+# - build an **Apache Iceberg** table and walk its files on disk;
+# - go back in time, add a column, and read the same table with three engines.
 #
 # **Tasks**
-# - [ ] 1 · Create a catalog, a namespace and a partitioned table (5')
-# - [ ] 2 · Load two batches; walk the metadata tree on disk (5')
-# - [ ] 3 · Upsert, delete, time travel (6')
-# - [ ] 4 · Evolve the schema and the partitioning without rewriting data (5')
-# - [ ] 5 · One table, many engines: DuckDB and Polars (4')
-# - [ ] ✱ Stretch · Expire old snapshots and see which files go away
+# - [ ] 1 · Catch a folder mid-rewrite (4')
+# - [ ] 2 · Create an Iceberg table and load two batches (6')
+# - [ ] 3 · Walk the metadata tree on disk (4')
+# - [ ] 4 · Change rows and time travel (6')
+# - [ ] 5 · Add a column; read with DuckDB and Polars (5')
+# - [ ] ✱ Stretch · Expire old snapshots and see which files stay on disk
 
 # %%
 import os, sys, subprocess
@@ -40,12 +39,15 @@ import json
 
 import duckdb
 import pandas as pd
+import polars as pl
 import pyarrow as pa
-from pyiceberg.transforms import DayTransform, MonthTransform
+import pyarrow.compute as pc
 from pyiceberg.types import StringType
 
+import de_viz as V
+
 pd.set_option("display.max_colwidth", 70)
-LAKE = U.lab_dir("D3_1", reset=True) / "lakehouse"      # our "object store"
+WORK = U.lab_dir("D4_1", reset=True)
 con = duckdb.connect()
 con.sql("SET enable_progress_bar = false")
 U.attach_app(con)
@@ -61,184 +63,211 @@ def orders_between(start, end):
 
 batch1 = orders_between("2026-08-01", "2026-08-04")
 batch2 = orders_between("2026-08-04", "2026-08-08")
-print(batch1.num_rows, "+", batch2.num_rows, "orders |", batch1.schema)
+print(f"batch 1: {batch1.num_rows:,} orders | batch 2: {batch2.num_rows:,} orders")
 
 # %% [markdown]
-# ## 1 · Create a catalog, a namespace and a partitioned table (5')
+# ## 1 · Catch a folder mid-rewrite (4')
 #
-# The **catalog** maps table names to their current metadata file. Here it's a SQLite file (`SqlCatalog`); in production
-# it's a REST catalog (Apache Polaris, Unity Catalog, AWS Glue, Nessie, Lakekeeper...). The **warehouse** is where data
-# and metadata files go: a local folder here, S3/ADLS/GCS in production.
+# Two Parquet files sit in a folder: that is the "table" most lakes start with. A job now has to fix the delivery fees
+# (add 15% VAT) and rewrites the files **one at a time**. Someone reads the folder between the two writes.
+#
+# Run the cell. There is nothing to write.
 
 # %%
+FOLDER = WORK / "clean_orders"
+FOLDER.mkdir()
+PART_1, PART_2 = FOLDER / "part-1.parquet", FOLDER / "part-2.parquet"
+
+def write_part(table, path, vat=False):
+    fee = "round(delivery_fee * 1.15, 2)" if vat else "delivery_fee"
+    con.register("_part", table)
+    con.sql(f"COPY (SELECT * REPLACE ({fee} AS delivery_fee) FROM _part) TO '{path.as_posix()}' (FORMAT parquet)")
+
+def total_fees():
+    return con.sql(f"SELECT round(sum(delivery_fee), 2) FROM '{FOLDER.as_posix()}/*.parquet'").fetchall()[0][0]
+
+write_part(batch1, PART_1)
+write_part(batch2, PART_2)
+before = total_fees()
+
+write_part(batch1, PART_1, vat=True)      # the job has done one file...
+during = total_fees()                     # ...and a reader arrives
+
+write_part(batch2, PART_2, vat=True)      # the job finishes
+after = total_fees()
+
+print(f"before the job: {before:>12,.2f} SAR")
+print(f"during the job: {during:>12,.2f} SAR   <- what the reader got")
+print(f"after the job:  {after:>12,.2f} SAR")
+U.check(before < during < after, "the reader got a total that was never true: part new, part old, and no error")
+
+# %% [markdown]
+# 🔍 Nothing failed and nothing warned. A bigger machine wouldn't help either. **What is missing is one place that says
+# which files are the table right now.** That is what a **table format** adds.
+#
+# ## 2 · Create an Iceberg table and load two batches (6')
+#
+# **Apache Iceberg** is a table format: Parquet files plus metadata files that list exactly which Parquet files make up
+# the table. Three words you need:
+# - **Catalog**: maps a table name to its current metadata file. Here it's a small SQLite file. At work it's a service.
+# - **Snapshot**: one complete version of the table. Every write creates a new one.
+# - **Warehouse**: where the files go. A local folder here, cloud storage at work.
+
+# %%
+LAKE = WORK / "lakehouse"
 catalog = U.get_catalog(LAKE)
 catalog.create_namespace("qafila")
-print(catalog.list_namespaces())
-
-# %% [markdown]
-# ✏️ **Exercise** · Create the table `qafila.orders` with `batch1.schema`, then add a partition field: **day** of `created_at`,
-# named `created_day` (use `table.update_spec()` as a context manager and `add_field(source_column, DayTransform(), name)`).
-#
-# Iceberg partitioning is **hidden**: the partition value is derived from `created_at`. Queries filter on `created_at`
-# and never need to know a `created_day` column exists.
-
-# %%
-# BEGIN SOLUTION
 orders = catalog.create_table("qafila.orders", schema=batch1.schema)
-with orders.update_spec() as spec:
-    spec.add_field("created_at", DayTransform(), "created_day")
-# END SOLUTION
-print(orders.spec())
 print(orders.schema())
-
-# %%
-U.check(len(orders.spec().fields) == 1 and orders.spec().fields[0].name == "created_day", "partitioned by day(created_at)")
+print("snapshots so far:", len(orders.snapshots()))
 
 # %% [markdown]
-# ## 2 · Load two batches; walk the metadata tree on disk (5')
+# ✏️ **Exercise 1** · Append `batch1`, then `batch2`, to the table.
 #
-# Every write creates a new **snapshot**: an immutable, complete view of the table at that moment. Writers never modify
-# existing files; they add files and atomically swap the catalog's pointer to a new metadata file.
+# *Hint:* `table.append(arrow_table)`. Two lines.
 
 # %%
-orders.append(batch1)
-# ✏️ Exercise: append the second batch, then build `snaps` = orders.inspect.snapshots() as pandas (columns snapshot_id, operation, summary)
-# BEGIN SOLUTION
-orders.append(batch2)
-snaps = orders.inspect.snapshots().to_pandas()[["committed_at", "snapshot_id", "operation", "summary"]]
-# END SOLUTION
-snaps
+def load_batches(table):
+    # BEGIN SOLUTION
+    table.append(batch1)
+    table.append(batch2)
+    # END SOLUTION
 
 # %%
-U.check(len(snaps) == 2, "two appends -> two snapshots")
-U.check(orders.scan().to_arrow().num_rows == batch1.num_rows + batch2.num_rows, "every order is in the table")
+try:
+    if orders.current_snapshot() is None:
+        load_batches(orders)
+except NotImplementedError:
+    print("⏭️ Exercise 1 not done yet. Expected: 2 snapshots. Loading the reference so the lab can go on.")
+    orders.append(batch1)
+    orders.append(batch2)
+
+n_loaded = orders.scan().to_arrow().num_rows
+print(f"rows: {n_loaded:,} | snapshots: {len(orders.snapshots())}")
+U.check(len(orders.snapshots()) == 2, "two appends made two snapshots")
+U.check(n_loaded == batch1.num_rows + batch2.num_rows, "every order is in the table")
+orders.inspect.snapshots().to_pandas()[["committed_at", "snapshot_id", "operation"]]
 
 # %% [markdown]
-# Now the files. Under `qafila/orders/` there are two folders: `data/` (Parquet, one folder per partition value) and
-# `metadata/`: `*.metadata.json` (one per commit), `snap-*.avro` (**manifest lists**, one per snapshot) and `*-m0.avro`
-# (**manifests**, listing data files with per-column statistics).
+# ## 3 · Walk the metadata tree on disk (4')
+#
+# Run both cells, then follow the tree from left to right: **metadata file → snapshot's manifest list → manifests → data
+# files**. A reader follows these pointers and never has to list a folder.
 
 # %%
 table_dir = LAKE / "qafila" / "orders"
 for p in sorted(table_dir.rglob("*")):
     if p.is_file():
-        print(f"{str(p.relative_to(table_dir)):95s} {p.stat().st_size / 1e3:7.1f} kB")
+        name = str(p.relative_to(table_dir))
+        print(f"{name[:18] + '…' + name[-22:] if len(name) > 41 else name:<42} {p.stat().st_size / 1e3:7.1f} kB")
 
-# %%
 meta = json.loads(Path(orders.metadata_location).read_text())
-print("format-version:", meta["format-version"])
-print("current-snapshot-id:", meta["current-snapshot-id"])
-print("snapshots:", [(s["snapshot-id"], s["summary"]["operation"], s["manifest-list"].split("/")[-1]) for s in meta["snapshots"]])
-
-# %% [markdown]
-# 🔍 The tree, top-down: **catalog** → current `metadata.json` (schemas, partition specs, snapshots) → **manifest list** of
-# the current snapshot → **manifests** → **data files**. A reader never lists directories (slow on object storage): it
-# follows pointers, and uses the statistics in manifests to skip whole files, like Parquet footers but one level up.
-# `inspect.files()` shows what the manifests know:
+print("\ncurrent snapshot:", meta["current-snapshot-id"], "| snapshots listed:", len(meta["snapshots"]))
 
 # %%
-orders.inspect.files().to_pandas()[["file_path", "partition", "record_count", "file_size_in_bytes"]].assign(
-    file_path=lambda d: d.file_path.str.split("/").str[-2:].str.join("/"))
+V.iceberg_tree(orders.metadata_location)
 
 # %% [markdown]
-# ## 3 · Upsert, delete, time travel (6')
+# 🔍 Look at the file list: how many `*.metadata.json` files are there, and how many Parquet files? The **commit** is the
+# single step that points the catalog at a new metadata file. Before that step, readers see the old version whole. After
+# it, they see the new one whole. That is the **atomic commit** the folder didn't have.
 #
-# Plain Parquet files can't be updated in place. Table formats can: they write new files and record which old files
-# (or which rows in them) no longer count. Two real changes for Qafila:
-# - five delivered orders from 1 August were **refunded** later: upsert their new status;
-# - one customer exercised the **right to erasure**: delete their orders.
+# ## 4 · Change rows and time travel (6')
+#
+# Parquet files are never edited. An update writes new files and a new snapshot, and the old snapshot stays readable. Two
+# real changes for Qafila: five orders were refunded, and one customer asked for their orders to be deleted. Run the cell.
 
 # %%
-refunds = batch1.filter(pa.compute.is_in(batch1["order_id"], pa.array(batch1["order_id"].to_pylist()[:5])))
+refund_ids = batch1["order_id"].to_pylist()[:5]
+refunds = batch1.filter(pc.is_in(batch1["order_id"], pa.array(refund_ids)))
 refunds = refunds.set_column(refunds.schema.get_field_index("status"), "status", pa.array(["refunded"] * 5))
-result = orders.upsert(refunds, join_cols=["order_id"])
-print(result)
+print(orders.upsert(refunds, join_cols=["order_id"]))
+
 erased_customer = batch1["customer_id"][7].as_py()
-print("erasing orders of customer", erased_customer)
+orders.delete(delete_filter=f"customer_id = {erased_customer}")
+print("deleted the orders of customer", erased_customer)
+print("snapshots now:", len(orders.snapshots()))
 
 # %% [markdown]
-# ✏️ **Exercise** · Delete every order of `erased_customer` (`orders.delete(delete_filter=...)` takes a string
-# expression like `"customer_id = 123"`). Then, for **each snapshot** in `orders.snapshots()`, count the rows and the
-# refunded orders by scanning **as of that snapshot** (`orders.scan(snapshot_id=...)`). Build `history` as a DataFrame
-# with `snapshot_id`, `operation`, `rows`, `refunded`.
+# ✏️ **Exercise 2** · Write `rows_at(snapshot_id)`: how many rows the table had **as of that snapshot**.
+#
+# *Hint:* `orders.scan(snapshot_id=snapshot_id)` reads an old version. `.to_arrow().num_rows` counts it. One line.
 
 # %%
-# BEGIN SOLUTION
-orders.delete(delete_filter=f"customer_id = {erased_customer}")
-rows = []
-for s in orders.snapshots():
-    t = orders.scan(snapshot_id=s.snapshot_id).to_arrow()
-    rows.append({"snapshot_id": s.snapshot_id, "operation": s.summary.operation.value, "rows": t.num_rows,
-                 "refunded": pa.compute.sum(pa.compute.equal(t["status"], "refunded")).as_py() or 0})
-history = pd.DataFrame(rows)
-# END SOLUTION
+def rows_at(snapshot_id):
+    # BEGIN SOLUTION
+    return orders.scan(snapshot_id=snapshot_id).to_arrow().num_rows
+    # END SOLUTION
+
+# %%
+try:
+    rows_at(orders.snapshots()[0].snapshot_id)
+except NotImplementedError:
+    print("⏭️ Exercise 2 not done yet. Expected: one count per snapshot, shrinking at the delete. Using the reference.")
+    def rows_at(snapshot_id):
+        return orders.scan(snapshot_id=snapshot_id).to_arrow().num_rows
+
+def refunded_at(snapshot_id):
+    return orders.scan(snapshot_id=snapshot_id, row_filter="status == 'refunded'").to_arrow().num_rows
+
+history = pd.DataFrame([{"snapshot": f"S{i}", "operation": s.summary.operation.value, "rows": rows_at(s.snapshot_id),
+                         "refunded": refunded_at(s.snapshot_id)} for i, s in enumerate(orders.snapshots(), 1)])
+U.check(history.rows.iloc[1] == batch1.num_rows + batch2.num_rows, "time travel still sees the version before the changes")
+U.check(history.rows.iloc[-1] < history.rows.iloc[1], "the current version has fewer rows after the delete")
+U.check(history.refunded.iloc[-1] == history.refunded.iloc[1] + 5, "the five new refunds are in the current version")
 history
 
+# %% [markdown]
+# 🔍 The upsert took two snapshots: one removes the old versions of the five orders, one appends the new versions. Which
+# snapshot would you read to find out what a dashboard showed yesterday? And notice: **the deleted customer's orders are
+# still readable in the older snapshots.** A real erasure also has to expire those snapshots and remove their files.
+#
+# ## 5 · Add a column; read with DuckDB and Polars (5')
+#
+# The app starts recording the sales `channel`. With a folder of Parquet files you'd have to decide what to do with every
+# old file. With Iceberg, the column is added to the metadata only.
+#
+# ✏️ **Exercise 3** · Add an optional text column `channel` to the table.
+#
+# *Hint:*
+# ```python
+# with table.update_schema() as update:
+#     update.add_column("channel", StringType())
+# ```
+
 # %%
-U.check(history.rows.iloc[-1] < history.rows.iloc[1], "the delete removed rows from the current snapshot")
-U.check(history.refunded.iloc[1] < history.refunded.iloc[-1], "the upsert changed statuses")
-U.check(history.rows.iloc[1] == batch1.num_rows + batch2.num_rows, "time travel still sees the old version")
+def add_channel(table):
+    # BEGIN SOLUTION
+    with table.update_schema() as update:
+        update.add_column("channel", StringType())
+    # END SOLUTION
+
+# %%
+parquet_before = U.count_files(table_dir / "data")
+try:
+    if "channel" not in orders.schema().column_names:
+        add_channel(orders)
+except NotImplementedError:
+    print("⏭️ Exercise 3 not done yet. Expected: a `channel` column and no new data file. Using the reference.")
+    with orders.update_schema() as update:
+        update.add_column("channel", StringType())
+
+U.check("channel" in orders.schema().column_names, "the column is in the table")
+U.check(U.count_files(table_dir / "data") == parquet_before, "not one data file was rewritten")
+
+# new rows carry a channel; old rows read it as NULL
+sept = orders_between("2026-09-01", "2026-09-02")
+orders.append(sept.append_column("channel", pa.array(["app"] * sept.num_rows, pa.string())))
+print("rows with a channel:", orders.scan(row_filter="channel == 'app'").to_arrow().num_rows,
+      "| rows without:", orders.scan(row_filter="channel is null").to_arrow().num_rows)
 
 # %% [markdown]
-# 🔍 Time travel is a superpower for debugging ("what did the table look like when the dashboard broke?") and for
-# reproducible ML training sets. But notice the PDPL problem: the erased customer's orders are **still readable in old
-# snapshots**, and their Parquet files still sit on disk. True erasure needs **snapshot expiry** too (✱ Stretch, Lab 4.3).
-#
-# ## 4 · Evolve the schema and the partitioning without rewriting data (5')
-#
-# Two new requirements. The app now records the sales `channel` (`app` / `web`). And daily partitions turned out to be
-# too small (many tiny files per store-day), so the team switches to **monthly** partitioning from September on.
-#
-# ✏️ **Exercise** · (1) Add an optional string column `channel` (`orders.update_schema()` → `add_column`). (2) Change the
-# partition spec: remove `created_day` and add `month(created_at)` named `created_month`. (3) Append September's first week
-# with a `channel` value of `"app"`.
-
-# %%
-# BEGIN SOLUTION
-with orders.update_schema() as upd:
-    upd.add_column("channel", StringType())
-with orders.update_spec() as spec:
-    spec.remove_field("created_day")
-    spec.add_field("created_at", MonthTransform(), "created_month")
-sept = orders_between("2026-09-01", "2026-09-08")
-sept = sept.append_column("channel", pa.array(["app"] * sept.num_rows, pa.string()))
-orders.append(sept)
-# END SOLUTION
-print(orders.schema())
-print(orders.specs())
-
-# %%
-files = orders.inspect.files().to_pandas()
-files["folder"] = files.file_path.str.split("/").str[-2]
-files.groupby("spec_id").agg(files=("folder", "size"), rows=("record_count", "sum"), folders=("folder", lambda f: sorted(set(f))))
-
-# %%
-U.check("channel" in orders.schema().column_names, "column added without rewriting a single data file")
-U.check(set(files.spec_id) == {1, 2}, "files written with two different partition specs live side by side")
-U.check(orders.scan(row_filter="created_at >= '2026-09-01T00:00:00'").to_arrow().num_rows == sept.num_rows, "queries don't care which spec a file used")
-
-# %% [markdown]
-# 🔍 Old files keep their old layout (daily) and old rows read `channel` as `NULL`; new files use the new layout. Readers
-# plan each file with the spec it was written with. In a Hive-style table both changes would mean rewriting everything.
-#
-# ## 5 · One table, many engines: DuckDB and Polars (4')
-#
-# The point of an **open** table format: any engine that speaks Iceberg can read (and often write) the same table, with the
-# same snapshots. DuckDB reads it through its `iceberg` extension, pointed at the current metadata file.
+# The point of an **open** format: any engine that speaks Iceberg can read the same files. Run this to ask DuckDB and
+# Polars the same question.
 
 # %%
 U.duckdb_iceberg(con)
 meta_path = orders.metadata_location
-con.sql(f"SELECT status, count(*) AS orders FROM iceberg_scan('{meta_path}') GROUP BY ALL ORDER BY orders DESC").df()
-
-# %% [markdown]
-# ✏️ **Exercise** · Compute orders per `store_id` for August **with DuckDB** (`iceberg_scan`) into `by_store_duck`, and the same
-# **with Polars** (`pl.scan_iceberg(orders)`) into `by_store_pl`, both sorted by `store_id`, columns `store_id`, `orders`.
-
-# %%
-import polars as pl
-
-# BEGIN SOLUTION
 by_store_duck = con.sql(f"""
     SELECT store_id, count(*) AS orders FROM iceberg_scan('{meta_path}')
     WHERE created_at < '2026-09-01' GROUP BY store_id ORDER BY store_id
@@ -247,62 +276,52 @@ by_store_pl = (pl.scan_iceberg(orders)
                  .filter(pl.col("created_at") < pl.datetime(2026, 9, 1))
                  .group_by("store_id").agg(pl.len().alias("orders"))
                  .sort("store_id").collect())
-# END SOLUTION
 U.check(by_store_duck["orders"].to_list() == by_store_pl["orders"].to_list(), "DuckDB and Polars read the same table state")
+print("August orders, both engines:", by_store_duck["orders"].sum())
 by_store_duck.head()
 
 # %% [markdown]
-# 🔍 Three engines, one copy of the data, one source of truth for "what's in the table right now". That's the lakehouse
-# promise. In production a Spark job might write the table, Trino or DuckDB serve ad-hoc queries, and Snowflake read it
-# through a catalog integration, all without copies.
+# 🔍 One copy of the data, one answer to "what's in the table right now". Which engine you pick becomes a choice per job.
 #
-# ## ✱ Stretch · Expire old snapshots and see which files go away
+# ## ✱ Stretch · Expire old snapshots and see which files stay on disk
 #
-# Expire every snapshot except the current one, then compare the files on disk and try time travel again.
+# Expire every snapshot except the current one, then compare the files on disk.
 
 # %%
-# BEGIN SOLUTION
-before_files = {p for p in table_dir.rglob("*.parquet")}
-current = orders.current_snapshot().snapshot_id
-old_ids = [s.snapshot_id for s in orders.snapshots() if s.snapshot_id != current]
-orders.maintenance.expire_snapshots().by_ids(old_ids).commit()
-orders.refresh()
-after_files = {p for p in table_dir.rglob("*.parquet")}
-print("snapshots left:", [s.snapshot_id for s in orders.snapshots()], "| current kept:", current)
-print(f"parquet files on disk: {len(before_files)} -> {len(after_files)}")
-still_referenced = {Path(p) for p in orders.inspect.all_files().to_pandas().file_path}
-print("unreferenced data files still on disk:", len(after_files - still_referenced))
-# END SOLUTION
+def stretch():
+    # BEGIN SOLUTION
+    before_files = set(table_dir.rglob("*.parquet"))
+    current = orders.current_snapshot().snapshot_id
+    orders.maintenance.expire_snapshots().by_ids([s.snapshot_id for s in orders.snapshots() if s.snapshot_id != current]).commit()
+    orders.refresh()
+    after_files = set(table_dir.rglob("*.parquet"))
+    print("snapshots left:", len(orders.snapshots()))
+    print(f"parquet files on disk: {len(before_files)} -> {len(after_files)}")
+    # END SOLUTION
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write `stretch()` if you have time.")
 
 # %% [markdown]
-# 🔍 Expiry removes snapshots from the **metadata**, so time travel to them is gone. Whether the now-unreferenced data files
-# are physically deleted depends on the engine (PyIceberg leaves them; Spark's `expire_snapshots` deletes them; a separate
-# "remove orphan files" job cleans up the rest). For erasure, you need both steps, and to check.
+# 🔍 Time travel to the old versions is gone, but PyIceberg leaves the files on disk. A separate cleanup job removes them.
 #
 # ## Checkpoint
 #
-# 1. Why can't you safely `UPDATE` rows in a folder of plain Parquet files that other jobs are reading?
-# 2. What does the catalog store, and why is it the single point every engine must agree on?
-# 3. Hidden partitioning: what problem from Lab 1.2 does it solve?
-# 4. Time travel and the right to erasure pull in opposite directions. How would you reconcile them at Qafila?
+# 1. Why can't a folder of Parquet files give a reader one consistent version during a rewrite?
 #
-# ## 🖼️ Visual summary
+# <details><summary>Answer</summary>Files change one at a time and nothing says which set is current, so a reader in the middle gets a mix. Iceberg's list of files changes in one step.</details>
 #
-# **1 · The metadata tree.** Drawn from the table's metadata after Task 4 (`meta_path`, before the ✱ Stretch expired
-# anything). Every commit added a snapshot; each snapshot's manifest list points to manifests, and manifests point to
-# data files. Snapshots **share** manifests and files they didn't change: an append only adds. Dark nodes are what the
-# current snapshot reads; grey nodes are reachable only by time travel, which is why their files can't be deleted yet.
-
-# %%
-import de_viz as V
-
-V.iceberg_tree(meta_path)
-
-# %% [markdown]
-# **2 · Time travel, snapshot by snapshot** (from Task 3's `history`). PyIceberg commits the upsert as two snapshots:
-# S3 removes the old versions of the five orders, S4 appends the refunded versions. S5 is the erasure delete: fewer
-# rows now, but S1 to S4 still show them.
-
-# %%
-V.bars(history.assign(snapshot=[f"S{i} {op}" for i, op in enumerate(history.operation, 1)]), "snapshot",
-       ["rows", "refunded"], titles=["rows visible in the snapshot", "refunded orders"])
+# 2. What does the catalog store, and why must every engine agree on it?
+#
+# <details><summary>Answer</summary>The location of the table's current metadata file. It decides which snapshot is "now": engines that use the same catalog see the same version.</details>
+#
+# 3. You deleted a customer's orders. Are they gone?
+#
+# <details><summary>Answer</summary>Not yet. They are gone from the current snapshot, but old snapshots and their files still hold them until you expire the snapshots and remove the files.</details>
+#
+# ## Carry forward
+#
+# Next you'll meet Spark, one more engine that can read tables like this. In the capstone, Iceberg is an option for your
+# gold tables, not a requirement. Want more? `tools/iceberg.ipynb`.
