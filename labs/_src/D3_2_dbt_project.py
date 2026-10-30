@@ -1,31 +1,19 @@
 # %% [markdown]
-# # Lab 2.3 · A dbt project for Qafila
+# # Lab 3.2 · The same star in dbt
 #
-# Day 2 · Session 3 (dbt: transformation as software) · 23 min, after `tools/dbt`. What you'll do:
-# - tour a real dbt project: sources, staging → intermediate → marts, macros, configs;
-# - write a **staging model** and an **incremental fact model** yourself, and build the DAG;
-# - watch an incremental run pick up a late change, and read the **lineage** dbt derives from `ref()`.
-#
-# The complete project is in `labs/dbt_qafila/`. This lab works on a **copy** with two models removed
-# (`stg_orders` and `fct_order_items`), and on a copy of the warehouse, so nothing you break affects other labs.
-# dbt runs **in-process** from Python (`U.run_dbt([...])` wraps `dbtRunner`); in a terminal you'd type `dbt build` etc.
-#
-# **Coming from Lab 2.2?** The project builds the same star, with simpler names and keys. Don't copy Lab 2.2's into it:
-#
-# | | Lab 2.2 (the star by hand) | Lab 2.3 (this project) |
-# |---|---|---|
-# | dimensions | `dim_customer`, `dim_product` | `dim_customers`, `dim_products` |
-# | keys in the fact | warehouse keys `customer_key`, `product_key` | source IDs `customer_id`, `product_id` (`-1` = Unknown) |
-# | date | `date_key` | `order_date` |
-# | lines with a quantity ≤ 0 | kept, so the fact reconciles to the source | left out of the fact, kept in `quarantine.qrn_order_items` |
+# Day 3 · Session 2 · 25 min. **dbt** turns a folder of `SELECT` statements into tables, in the right order, and tests
+# them. What you'll do:
+# - tour a real project, and write one **staging model** from a source;
+# - build the whole star with `dbt build`: the same `fct_order_items` and `dim_*` tables as Lab 3.1;
+# - write one **mart** with `ref`, then read the **lineage** dbt worked out by itself.
 #
 # **Tasks**
 # - [ ] 1 · Tour the project and list its models (4')
-# - [ ] 2 · Write `stg_orders` and build the staging layer (6')
-# - [ ] 3 · Write the incremental `fct_order_items` and build the marts (6')
-# - [ ] 4 · Change a source row; watch the incremental run (4')
-# - [ ] 5 · Read the lineage from the manifest (3')
-# - [ ] ✱ Stretch · Add a weekly category mart and document it
+# - [ ] 2 · Write stg_orders from a source (6')
+# - [ ] 3 · Run dbt build and read the log (5')
+# - [ ] 4 · Write a mart with ref and build it (6')
+# - [ ] 5 · Read the lineage (4')
+# - [ ] ✱ Stretch · Split your mart by month
 
 # %%
 import os, sys, subprocess
@@ -48,275 +36,259 @@ U.ensure_data()
 print("data:", U.RAW, "| quick mode:", U.QUICK)
 
 # %%
-import json
-import shutil
-
 import duckdb
+import de_viz as V
 
-U.build_warehouse()
-OUT = U.lab_dir("D2_3", reset=True)
-PROJ = OUT / "dbt_qafila"
-DB = OUT / "qafila.duckdb"
-shutil.copytree(U.DBT_PROJECT, PROJ, ignore=shutil.ignore_patterns("target", "logs", "dbt_packages"))
-shutil.copy(U.WAREHOUSE_DB, DB)                                  # bronze layer only
-for m in ["models/staging/stg_orders.sql", "models/marts/fct_order_items.sql"]:   # you'll write these two
-    (PROJ / m).write_text("-- TODO (Lab 2.3): placeholder so the project still parses\nselect 1 as todo\n", encoding="utf-8")
+OUT = U.lab_dir("D3_2", reset=True)
+PROJ, DB = U.dbt_lab_copy(OUT)                   # your private copy of the project and of the raw tables
+STG = PROJ / "models/staging/stg_orders.sql"
+STG.write_text("-- Task 2: you write this model\nselect 1 as todo\n", encoding="utf-8")
 
 
 def dbt(*args, quiet=False):
-    """Run dbt on this lab's project and database."""
+    """Run a dbt command on this lab's project. In a terminal you'd type: dbt build"""
     return U.run_dbt(list(args), project_dir=PROJ, db_path=DB, quiet=quiet)
 
 
 def sql(query):
-    with duckdb.connect(str(DB)) as c:          # same settings as dbt's own connection in this process
+    with duckdb.connect(str(DB)) as c:
         return c.sql(query).df()
+
+
+def model_names(*select):
+    """dbt ls: the names of the models it finds, as a sorted list."""
+    return sorted(dbt("--log-level", "none", "ls", *select, "--resource-type", "model", "--output", "name").result)
 
 # %% [markdown]
 # ## 1 · Tour the project and list its models (4')
 #
-# A dbt project is a folder of SQL `SELECT`s plus YAML. dbt turns each `SELECT` into a view or table, in dependency order.
+# A dbt project is a folder of `.sql` files, each holding one `SELECT`, plus a little YAML. A **model** is one such file:
+# dbt runs the `SELECT` and saves the result as a view or a table named after the file.
 
 # %%
-for p in sorted(PROJ.rglob("*")):
+for p in sorted((PROJ / "models").rglob("*")):
     if p.is_file():
         print(p.relative_to(PROJ))
 
+# %% [markdown]
+# Three layers, one folder each. **staging**: one model per raw table, light cleaning only. **intermediate**: helper steps.
+# **marts**: the star that people query. Here's how the folders become views and tables:
+
 # %%
-print((PROJ / "dbt_project.yml").read_text(encoding="utf-8"))
+text = (PROJ / "dbt_project.yml").read_text(encoding="utf-8")
+print(text[text.index("models:"):text.index("seeds:")])
+
+# %% [markdown]
+# A **view** is a saved query: no copy of the data, always current, recomputed on every read. A **table** is a stored
+# result: fast to read, as old as its last build. Staging stays light, so views. Marts are read all day, so tables.
+#
+# A **source** names a raw table that dbt doesn't build. It's declared in YAML once, and models point at it. A staging model
+# reads a source with `{{ source('raw', 'order_items') }}`: `{{ ... }}` is **Jinja**, filled in by dbt before the SQL runs.
+
+# %%
 print((PROJ / "models/staging/stg_order_items.sql").read_text(encoding="utf-8"))
 
 # %% [markdown]
-# Three things to notice:
-# - `{{ source('raw', 'order_items') }}` points at a declared **source** (`models/staging/_sources.yml`), never at a table name.
-# - Folder-level configs in `dbt_project.yml`: staging models are **views** in schema `staging`, marts are **tables** in `marts`.
-# - Reusable SQL lives in **macros** (`macros/text.sql`: Arabic normalization, number parsing, E.164 mobiles, Riyadh time).
-#
-# `dbt ls` lists what dbt sees. `+fct_orders` means "fct_orders and everything upstream of it".
+# `dbt ls` lists everything dbt found. `mart_daily_city_sales` is a report already in the project; yours comes in Task 4.
 
 # %%
-res = dbt("ls", "--resource-type", "model", "--output", "name", quiet=True)
-print(sorted(res.result))
+model_names()
 
 # %% [markdown]
-# Every model is listed, including the two placeholders: dbt checks at parse time that every `ref()` points to an existing
-# model, so we couldn't simply delete them. Let's write them.
+# ## 2 · Write stg_orders from a source (6')
 #
-# ## 2 · Write `stg_orders` and build the staging layer (6')
+# `stg_orders` is one row per order, with times in UTC and in Riyadh time. Most columns are already there.
 #
-# ✏️ **Exercise** · Write `models/staging/stg_orders.sql`: one row per order from `source('raw', 'orders')` with the columns
-# `order_id, customer_id, store_id, status, payment_method, promo_code, delivery_fee`, plus
-# - `created_at_utc` (cast `created_at` to `timestamp`),
-# - `created_at_riyadh` and `order_date` (Riyadh date) using the `to_riyadh()` macro,
-# - `updated_at_utc`.
+# ✏️ **Exercise** · Add the two missing pieces:
+# - `order_date`: the Riyadh date of the order (`created_at` as a timestamp, plus 3 hours, cast to `date`);
+# - `source`: the raw `orders` table, using `source(...)` as in `stg_order_items` above.
 #
-# Write the file from Python (the cell writes `STG_ORDERS` to disk).
+# *Hint:* `"(created_at::timestamp + interval 3 hour)::date as order_date"` and `"{{ source('raw', 'orders') }}"`.
 
 # %%
-# BEGIN SOLUTION
-STG_ORDERS = """
--- One row per order. The app stores UTC as text; Qafila reports in Riyadh time.
-select
-    order_id,
-    customer_id,
-    store_id,
-    status,
-    payment_method,
-    promo_code,
-    delivery_fee,
-    created_at::timestamp                                as created_at_utc,
-    {{ to_riyadh('created_at::timestamp') }}             as created_at_riyadh,
-    {{ to_riyadh('created_at::timestamp') }}::date       as order_date,
-    updated_at::timestamp                                as updated_at_utc
+def stg_orders_sql():
+    columns = """order_id, customer_id, store_id, status, payment_method, promo_code, delivery_fee,
+    created_at::timestamp                          as created_at_utc,
+    created_at::timestamp + interval 3 hour        as created_at_riyadh,
+    updated_at::timestamp                          as updated_at_utc"""
+    # BEGIN SOLUTION
+    order_date = "(created_at::timestamp + interval 3 hour)::date as order_date"
+    source = "{{ source('raw', 'orders') }}"
+    # END SOLUTION
+    return f"select\n    {columns},\n    {order_date}\nfrom {source}\n"
+
+# %%
+REFERENCE_STG = """select
+    order_id, customer_id, store_id, status, payment_method, promo_code, delivery_fee,
+    created_at::timestamp                          as created_at_utc,
+    created_at::timestamp + interval 3 hour        as created_at_riyadh,
+    updated_at::timestamp                          as updated_at_utc,
+    (created_at::timestamp + interval 3 hour)::date as order_date
 from {{ source('raw', 'orders') }}
 """
-# END SOLUTION
-(PROJ / "models/staging/stg_orders.sql").write_text(STG_ORDERS.strip() + "\n", encoding="utf-8")
-dbt("run", "--select", "staging")
-
-# %%
-sql("SELECT order_id, created_at_utc, created_at_riyadh, order_date FROM staging.stg_orders WHERE order_id = 5000002")
-
-# %%
-row = sql("SELECT created_at_utc, created_at_riyadh, order_date FROM staging.stg_orders WHERE order_id = 5000002").iloc[0]
-U.check((row.created_at_riyadh - row.created_at_utc).total_seconds() == 3 * 3600, "Riyadh time = UTC + 3h")
-U.check(sql("SELECT count(*) AS n FROM staging.stg_orders").n[0] == 45766, "one row per order")
+try:
+    STG.write_text(stg_orders_sql(), encoding="utf-8")
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    STG.write_text(REFERENCE_STG, encoding="utf-8")
+dbt("run", "--select", "stg_orders")
+khalid = sql("SELECT order_id, created_at_utc, created_at_riyadh, order_date FROM staging.stg_orders WHERE order_id = 5043883")
+print("expected: 45,766 orders; Khalid's order_date is 2026-09-28")
+U.check(sql("SELECT count(*) AS n FROM staging.stg_orders").n[0] == 45_766, "one row per order")
+U.check(str(khalid.order_date[0])[:10] == "2026-09-28", "22:35 UTC on the 27th is the 28th in Riyadh")
+khalid
 
 # %% [markdown]
-# Peek at what dbt actually sent to DuckDB: `dbt compile` renders the Jinja into plain SQL under `target/compiled/`.
+# dbt filled in the Jinja and wrapped your `SELECT` in a `CREATE VIEW`. See the SQL it sent, and confirm the result is a view:
 
 # %%
 dbt("compile", "--select", "stg_orders", quiet=True)
 print(next((PROJ / "target" / "compiled").rglob("stg_orders.sql")).read_text(encoding="utf-8"))
+sql("SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_name = 'stg_orders'")
 
 # %% [markdown]
-# ## 3 · Write the incremental `fct_order_items` and build the marts (6')
+# ## 3 · Run dbt build and read the log (5')
 #
-# The order-line fact is the biggest table, and it grows every day, so it's **incremental**: `is_incremental()`,
-# `{{ this }}` and `unique_key` work as in `tools/dbt` §7b. What's new here is the real fact's columns and a
-# look-back window for late status changes.
-#
-# ✏️ **Exercise** · Write `models/marts/fct_order_items.sql`, the Lab 2.2 fact in dbt form. Grain: one row per order line
-# with `quantity > 0`. Config: `materialized='incremental'`, `unique_key='order_line_id'`, `incremental_strategy='delete+insert'`,
-# `on_schema_change='fail'`. On incremental runs, only take orders with `updated_at_utc` later than **3 days before** the max
-# `order_updated_at_utc` already loaded (late status changes). Columns, in this order (the YAML contract enforces them):
-# `order_line_id, order_id, line_no, order_date, customer_id (-1 via var('unknown_key') if not in dim_customers), store_id,
-# product_id, order_status, payment_method, promo_code, quantity, unit_price, discount, gross_amount, net_amount, order_updated_at_utc`.
+# `dbt build` builds everything in dependency order and runs each model's tests right after it. Nobody told it the order:
+# it read every `source()` and `ref()`. Read the log as it runs: each line is one model or test, with `OK`, `PASS` or `WARN`.
 
 # %%
-# BEGIN SOLUTION
-FCT = """
-{{
-    config(
-        materialized='incremental',
-        unique_key='order_line_id',
-        incremental_strategy='delete+insert',
-        on_schema_change='fail'
-    )
-}}
-
-with orders as (
-    select * from {{ ref('stg_orders') }}
-    {% if is_incremental() %}
-    where updated_at_utc > (select max(order_updated_at_utc) - interval 3 day from {{ this }})
-    {% endif %}
-),
-
-customers as (
-    select customer_id from {{ ref('dim_customers') }}
-)
-
-select
-    i.order_line_id,
-    i.order_id,
-    i.line_no,
-    o.order_date,
-    coalesce(c.customer_id, {{ var('unknown_key') }})   as customer_id,
-    o.store_id,
-    i.product_id,
-    o.status                                            as order_status,
-    o.payment_method,
-    o.promo_code,
-    i.quantity,
-    i.unit_price,
-    i.discount,
-    i.gross_amount,
-    i.net_amount,
-    o.updated_at_utc                                    as order_updated_at_utc
-from orders o
-join {{ ref('stg_order_items') }} i on i.order_id = o.order_id
-left join customers c on c.customer_id = o.customer_id
-where i.quantity > 0
-"""
-# END SOLUTION
-(PROJ / "models/marts/fct_order_items.sql").write_text(FCT.strip() + "\n", encoding="utf-8")
-dbt("seed", quiet=True)
-dbt("run", "--select", "+fct_orders")       # fct_orders and everything it depends on
-
-# %%
-facts = sql("SELECT count(*) AS lines, count(DISTINCT order_id) AS orders, round(sum(net_amount)) AS net_sar FROM marts.fct_order_items")
-facts
-
-# %%
-U.check(facts.lines[0] == 172545 - 142, "every order line except the 142 with non-positive quantity")
-U.check(sql("SELECT count(*) AS n FROM marts.fct_order_items WHERE customer_id = -1").n[0] > 0, "erased customers mapped to -1")
+result = dbt("build")
 
 # %% [markdown]
-# ## 4 · Change a source row; watch the incremental run (4')
-#
-# Simulate tomorrow's load: one delivered order is refunded on 1 October, so its `status` and `updated_at` change in the
-# source. Then run the fact model again, incrementally.
+# The same star as Lab 3.1: same table names, same keys, same revenue.
 
 # %%
-with duckdb.connect(str(DB)) as c:
-    c.sql("UPDATE raw.orders SET status = 'refunded', updated_at = '2026-10-01 09:15:00' WHERE order_id = 5000002")
-before = sql("SELECT order_status, order_updated_at_utc FROM marts.fct_order_items WHERE order_id = 5000002 LIMIT 1")
-dbt("run", "--select", "fct_order_items")
-after = sql("SELECT order_status, order_updated_at_utc FROM marts.fct_order_items WHERE order_id = 5000002 LIMIT 1")
-display(before, after)
+star = sql("""
+    SELECT 'fct_order_items' AS table_name, count(*) AS rows FROM marts.fct_order_items
+    UNION ALL SELECT 'dim_customers', count(*) FROM marts.dim_customers
+    UNION ALL SELECT 'dim_products', count(*) FROM marts.dim_products
+    UNION ALL SELECT 'dim_stores', count(*) FROM marts.dim_stores
+    UNION ALL SELECT 'dim_date', count(*) FROM marts.dim_date
+""")
+print(f"{len(result.result.results)} steps; statuses:", {s: sum(str(r.status) == s for r in result.result.results) for s in sorted({str(r.status) for r in result.result.results})})
+star
+
+# %%
+U.check(star.rows[0] == 172_545 - 142, "fct_order_items: every order line except the 142 with a non-positive quantity")
+U.check(sql("SELECT count(*) AS n FROM marts.fct_order_items WHERE customer_id = -1").n[0] > 0, "erased customers point to the unknown member, -1")
 
 # %% [markdown]
-# ✏️ **Exercise** · Prove the run was incremental and idempotent:
-# - `n_processed`: how many orders did the incremental filter select? (Count orders in `staging.stg_orders` with
-#   `updated_at_utc` later than 3 days before the max `order_updated_at_utc` **before** this run: `2026-09-30 23:59:59`.)
-# - `dupes`: count of `order_line_id` values that appear more than once in the fact (should be 0).
+# 🔍 Find the `WARN` lines in the log. dbt built everything anyway. Lab 3.3 is about what they mean and who decides.
+#
+# Here's the fact as a model. Compare it with Lab 3.1's query: it's the same `SELECT`, reading other models with `ref`
+# instead of table names.
 
 # %%
-# BEGIN SOLUTION
-n_processed = sql("""SELECT count(*) AS n FROM staging.stg_orders
-                     WHERE updated_at_utc > TIMESTAMP '2026-09-30 23:59:59' - INTERVAL 3 DAY""").n[0]
-dupes = sql("SELECT count(*) AS n FROM (SELECT order_line_id FROM marts.fct_order_items GROUP BY 1 HAVING count(*) > 1)").n[0]
-# END SOLUTION
-print(f"incremental run reprocessed {n_processed:,} of 45,766 orders | duplicate lines: {dupes}")
-U.check(after.order_status[0] == "refunded", "the late change reached the fact table")
-U.check(dupes == 0, "delete+insert replaced rows instead of duplicating them")
+print((PROJ / "models/marts/fct_order_items.sql").read_text(encoding="utf-8"))
 
 # %% [markdown]
-# 🔍 The look-back window (3 days) is a business decision: it must cover how late changes can arrive. Too short and
-# late refunds are missed forever; too long and every run reprocesses a lot. `dbt run --full-refresh` rebuilds from scratch
-# when the logic changes.
+# ## 4 · Write a mart with ref and build it (6')
 #
-# ## 5 · Read the lineage from the manifest (3')
+# `{{ ref('model_name') }}` means "the table that model builds". Use it whenever a model reads another model: it's how dbt
+# learns the order. A **mart** is a table shaped for one question. Finance's question: product revenue per city.
 #
-# Every `ref()` and `source()` is an edge in a graph. dbt writes the graph to `target/manifest.json`; `dbt docs generate`
-# adds column metadata and `dbt docs serve` renders it as a website.
+# ✏️ **Exercise** · Complete the `SELECT`: read `fct_order_items` and `dim_stores` with `ref`, keep delivered orders, and group
+# by city. Columns: `city`, `revenue_sar` (rounded sum of `net_amount`), `orders` (distinct `order_id`).
 #
-# ✏️ **Exercise** · From the manifest, list the direct parents (`depends_on.nodes`) of `model.qafila.fct_orders`, and the
-# **direct** children of `model.qafila.stg_orders` (the manifest's `child_map`). Store them in `parents` and `children` (lists of names).
+# *Hint:* `from {{ ref('fct_order_items') }} f join {{ ref('dim_stores') }} s using (store_id)`
 
 # %%
-dbt("parse", quiet=True)
-manifest = json.loads((PROJ / "target" / "manifest.json").read_text(encoding="utf-8"))
-# BEGIN SOLUTION
-parents = [n.split(".")[-1] for n in manifest["nodes"]["model.qafila.fct_orders"]["depends_on"]["nodes"]]
-children = [n.split(".")[-1] for n in manifest["child_map"]["model.qafila.stg_orders"] if n.startswith("model.")]
-# END SOLUTION
-print("fct_orders <-", sorted(parents))
-print("stg_orders ->", sorted(children))
-U.check({"fct_order_items", "stg_orders"} <= set(parents), "fct_orders reads the fact and the staging orders")
-
-# %% [markdown]
-# 🔍 This graph is how dbt knows the build order, what `+model` selects, and what breaks downstream when a column
-# changes. Orchestrators (Lab 4.1) import exactly this graph to schedule each model as an asset.
-#
-# ## ✱ Stretch · Add a weekly category mart and document it
-#
-# Add `models/marts/mart_weekly_category.sql`: one row per ISO week and product category with delivered revenue and units,
-# built from `fct_order_items` and `dim_products`. Add a YAML entry with a description and a uniqueness test on
-# `iso_week || category`, then `dbt build --select dim_products mart_weekly_category` (nothing above built
-# `dim_products` yet).
-
-# %%
-# BEGIN SOLUTION
-(PROJ / "models/marts/mart_weekly_category.sql").write_text("""
-select
-    weekofyear(f.order_date)            as iso_week,
-    p.category,
-    round(sum(f.net_amount), 2)         as revenue_sar,
-    sum(f.quantity)                     as units
+def mart_city_revenue_sql():
+    # BEGIN SOLUTION
+    return """select s.city, round(sum(f.net_amount), 2) as revenue_sar, count(distinct f.order_id) as orders
 from {{ ref('fct_order_items') }} f
-join {{ ref('dim_products') }} p using (product_id)
+join {{ ref('dim_stores') }} s using (store_id)
 where f.order_status = 'delivered'
-group by all
-""".strip() + "\n", encoding="utf-8")
-(PROJ / "models/marts/_weekly.yml").write_text("""
-version: 2
-models:
-  - name: mart_weekly_category
-    description: Delivered revenue and units per ISO week (Riyadh dates) and product category.
-    data_tests:
-      - unique:
-          arguments:
-            column_name: "iso_week || '|' || category"
-""".strip() + "\n", encoding="utf-8")
-dbt("build", "--select", "dim_products", "mart_weekly_category")
-display(sql("SELECT * FROM marts.mart_weekly_category ORDER BY iso_week DESC, revenue_sar DESC LIMIT 5"))
-# END SOLUTION
+group by s.city
+"""
+    # END SOLUTION
+
+# %%
+MART = PROJ / "models/marts/mart_city_revenue.sql"
+REFERENCE_MART = """select s.city, round(sum(f.net_amount), 2) as revenue_sar, count(distinct f.order_id) as orders
+from {{ ref('fct_order_items') }} f
+join {{ ref('dim_stores') }} s using (store_id)
+where f.order_status = 'delivered'
+group by s.city
+"""
+try:
+    MART.write_text(mart_city_revenue_sql(), encoding="utf-8")
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    MART.write_text(REFERENCE_MART, encoding="utf-8")
+dbt("build", "--select", "mart_city_revenue")
+cities = sql("SELECT * FROM marts.mart_city_revenue ORDER BY revenue_sar DESC")
+print(f"total: {cities.revenue_sar.sum():,.0f} SAR   (expected: 3 cities, 6,500,179 SAR, the same as Lab 3.1)")
+U.check(len(cities) == 3 and round(cities.revenue_sar.sum()) == 6_500_179, "the mart matches the business definition")
+cities
+
+# %% [markdown]
+# ## 5 · Read the lineage (4')
+#
+# **Lineage** is the map of what feeds what. You never drew it: every `ref()` and `source()` is an arrow. In selectors,
+# `+name` means "this model and everything it needs", and `name+` means "this model and everything that reads it".
+#
+# 🔍 Before running: which models read `stg_orders`, directly or not? Which models does your mart need?
+
+# %%
+downstream = model_names("--select", "stg_orders+")
+upstream = model_names("--select", "+mart_city_revenue")
+print("stg_orders+       :", downstream)
+print("+mart_city_revenue:", upstream)
+V.dbt_graph(PROJ)
+
+# %%
+U.check("mart_city_revenue" in downstream and "stg_orders" in upstream, "your mart sits downstream of stg_orders")
+
+# %% [markdown]
+# 🔍 You want to rename `status` in `stg_orders`. The first line of the output above is the list of models to check before
+# you do. That's why lineage matters on an ordinary Tuesday, not only in diagrams.
+#
+# ## ✱ Stretch · Split your mart by month
+#
+# Add `month(f.order_date) as month` to `mart_city_revenue` so it has one row per city and month, then rebuild only it. How
+# many rows do you expect?
+
+# %%
+def stretch():
+    # BEGIN SOLUTION
+    MART.write_text("""select s.city, month(f.order_date) as month, round(sum(f.net_amount), 2) as revenue_sar
+    from {{ ref('fct_order_items') }} f
+    join {{ ref('dim_stores') }} s using (store_id)
+    where f.order_status = 'delivered'
+    group by all
+    """, encoding="utf-8")
+    dbt("build", "--select", "mart_city_revenue", quiet=True)
+    display(sql("SELECT * FROM marts.mart_city_revenue ORDER BY city, month"))
+    # END SOLUTION
+
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write stretch() above if you have time.")
 
 # %% [markdown]
 # ## Checkpoint
 #
-# 1. Why `{{ source() }}` and `{{ ref() }}` instead of table names? What would break without them?
-# 2. Staging models are views and marts are tables here. When would you make a staging model a table?
-# 3. A bug in `stg_orders` is fixed. Is the incremental `fct_order_items` now correct? What do you run?
-# 4. dbt v2 (the Rust "Fusion" engine) parses projects much faster and understands SQL. What changes for this project? What doesn't?
+# 1. What would break if `mart_city_revenue` used `marts.fct_order_items` instead of `{{ ref('fct_order_items') }}`?
+# 2. Why are staging models views and marts tables here?
+# 3. What's the difference between `dbt build --select stg_orders+` and `dbt build --select +stg_orders`?
+#
+# <details><summary>Answers</summary>
+#
+# 1. The SQL still works once the table exists, but dbt no longer sees the arrow: on a new database it may build the mart
+#    first and fail, and the lineage misses it.
+# 2. Staging is light and should always show current raw data, so a saved query is enough. Marts are read all day by many
+#    people, so a stored result is worth the build time.
+# 3. `stg_orders+` builds it and everything that reads it. `+stg_orders` builds it and everything it needs.
+#
+# </details>
+#
+# ## Carry forward
+#
+# Lab 3.3 adds tests to this project, and Lab 3.4 puts it in an orchestrator's graph. Both start from a fresh copy. dbt can
+# also load only new rows instead of rebuilding a big table (incremental models); you'll meet that later on the job.
+#
+# Want more? `tools/dbt.ipynb`.

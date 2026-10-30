@@ -1,22 +1,18 @@
 # %% [markdown]
-# # Lab 2.4 · Make it trustworthy: tests, contracts, validation
+# # Lab 3.3 · Tests and quarantine
 #
-# Day 2 · Session 4 (Testing & data quality) · 25 min. What you'll do:
-# - run the Qafila project's tests and learn to read **pass / warn / error**;
-# - add a test that catches a **real** problem, and decide whether it should warn or fail;
-# - enforce a **model contract** and watch it stop a breaking change;
-# - write a dbt **unit test** for a cleaning rule;
-# - validate the supplier price files with **Pandera** before they enter the warehouse, quarantining bad rows.
-#
-# Like Lab 2.3, you work on a copy of the project and the warehouse.
+# Day 3 · Session 3 · 25 min. A number nobody can check is a number nobody should trust. What you'll do:
+# - run the project's **dbt tests** and read pass, warn and error;
+# - add a **relationships** test that catches real orphans, and choose whether it warns or stops the build;
+# - check the supplier files with **Pandera** at the door, and set the bad rows aside in **quarantine**.
 #
 # **Tasks**
-# - [ ] 1 · Run the existing tests; read warn vs. error (4')
-# - [ ] 2 · Add a relationships test that catches real orphans (6')
-# - [ ] 3 · Enforce a model contract; watch a type change break the build (5')
-# - [ ] 4 · Write a dbt unit test for mobile normalization (5')
-# - [ ] 5 · Validate supplier files with Pandera; quarantine bad rows (5')
-# - [ ] ✱ Stretch · Store test failures in the warehouse and query them
+# - [ ] 1 · Run the tests and read the warnings (5')
+# - [ ] 2 · Add a relationships test that finds orphans (6')
+# - [ ] 3 · Choose warn or error (5')
+# - [ ] 4 · Validate the supplier files with Pandera (6')
+# - [ ] 5 · Quarantine the bad rows (3')
+# - [ ] ✱ Stretch · Store the failing rows in the warehouse
 
 # %%
 import os, sys, subprocess
@@ -39,7 +35,6 @@ U.ensure_data()
 print("data:", U.RAW, "| quick mode:", U.QUICK)
 
 # %%
-import shutil
 import warnings
 
 import duckdb
@@ -49,24 +44,19 @@ import polars as pl
 warnings.filterwarnings("ignore", category=FutureWarning)          # pyspark's pandas-3 notice, via pandera
 import pandera.polars as pa
 
-U.build_warehouse()
-OUT = U.lab_dir("D2_4", reset=True)
-PROJ = OUT / "dbt_qafila"
-DB = OUT / "qafila.duckdb"
-shutil.copytree(U.DBT_PROJECT, PROJ, ignore=shutil.ignore_patterns("target", "logs", "dbt_packages"))
-shutil.copy(U.WAREHOUSE_DB, DB)
+OUT = U.lab_dir("D3_3", reset=True)
+PROJ, DB = U.dbt_lab_copy(OUT)                   # a private copy of the project (the Lab 3.2 star) and of the raw tables
 
 
-def dbt(*args, quiet=True):
-    """Run dbt on this lab's project; return a table of results instead of raising on test failures."""
+def dbt(*args):
+    """Run dbt; return a table of results, one row per model or test. A failed test is a result here, not a crash."""
     from dbt.cli.main import dbtRunner
 
     os.environ["QAFILA_DUCKDB"] = DB.resolve().as_posix()
-    cli = (["--quiet"] if quiet else []) + list(args) + ["--project-dir", str(PROJ), "--profiles-dir", str(PROJ)]
-    res = dbtRunner().invoke(cli)
+    res = dbtRunner().invoke(["--quiet", *args, "--project-dir", str(PROJ), "--profiles-dir", str(PROJ)])
     if res.result is None or not hasattr(res.result, "results"):
         raise RuntimeError(f"dbt {' '.join(args)} could not run: {res.exception}")
-    return pd.DataFrame([{"node": r.node.name, "status": str(r.status), "failures": r.failures, "message": (r.message or "")[:90]}
+    return pd.DataFrame([{"node": r.node.name, "type": r.node.resource_type, "status": str(r.status), "failures": r.failures}
                          for r in res.result.results])
 
 
@@ -74,159 +64,127 @@ def sql(query):
     with duckdb.connect(str(DB)) as c:
         return c.sql(query).df()
 
-
-dbt("seed")
-build = dbt("build")
-build.status.value_counts()
-
 # %% [markdown]
-# ## 1 · Run the existing tests; read warn vs. error (4')
+# ## 1 · Run the tests and read the warnings (5')
 #
-# `dbt build` ran every model **and** its tests in DAG order: a model's tests run right after it's built, and if an
-# error-severity test fails, everything downstream is **skipped**. Let's look at the tests that didn't pass:
-
-# %%
-build[build.status != "pass"]
-
-# %% [markdown]
-# Three warnings, and each one is a real issue from your Day 1 issue log:
-# - `positive_stg_order_items_quantity`: 142 negative quantities (they're routed to `quarantine.qrn_order_items`);
-# - `positive_stg_supplier_prices_unit_cost_sar`: 4 zero or negative supplier costs in week 39;
-# - `assert_order_totals_match_payments`: a singular test (plain SQL in `tests/`) finding orders whose payment differs from the total.
-#
-# **Warn or error?** Error stops the pipeline, which is right when bad data would do more harm than stale data (wrong
-# invoices, a broken fact grain). Warn keeps data flowing and makes noise, which is right for known, tolerated issues
-# that someone is following up. Every warning needs an owner, or it becomes wallpaper.
-#
-# ## 2 · Add a relationships test that catches real orphans (6')
-#
-# `stg_orders.customer_id` should point to a customer. We know it doesn't always (erased customers).
-#
-# A model is described in **one** YAML entry, so the test goes where `stg_orders` is already described: in
-# `models/staging/_staging.yml`, under `stg_orders` → `columns`.
-#
-# ✏️ **Exercise** · Write `NEW_TEST`, the YAML for a `customer_id` column with a `relationships` test to
-# `ref('stg_customers')`, field `customer_id`, with `severity: warn` (under `config:`). The cell inserts it after the
-# existing `store_id` column. Mind the indentation: it must line up with `- name: store_id`.
+# A **dbt test** is a query that looks for bad rows: no rows back means pass. `dbt build` runs each model, then its tests.
+# The tests are declared in YAML next to the model. Look at the ones on `stg_orders`:
 
 # %%
 staging_yml = PROJ / "models/staging/_staging.yml"
 text = staging_yml.read_text(encoding="utf-8")
-anchor = """      - name: store_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('stg_stores')
-                field: store_id
-"""
-assert anchor in text
-# BEGIN SOLUTION
-NEW_TEST = """      - name: customer_id
+print(text[text.index("  - name: stg_orders"):text.index("  - name: stg_order_items")])
+
+# %% [markdown]
+# Four kinds come with dbt: `unique`, `not_null`, `accepted_values`, `relationships` (every value exists in another table).
+# Now build everything. This takes a moment.
+
+# %%
+build = dbt("build")
+tests = build[build.type == "test"]
+print(f"{len(build[build.type == 'model'])} models, {len(tests)} tests:", tests.status.value_counts().to_dict())
+tests[tests.status != "pass"]
+
+# %% [markdown]
+# 🔍 Three warnings, each a real problem in the data:
+# - `positive_stg_order_items_quantity`: 142 lines with a non-positive quantity. The same lines you left out of the fact in Lab 3.1;
+#   the project also keeps them, with a reason, in `quarantine.qrn_order_items`.
+# - `positive_stg_supplier_prices_unit_cost_sar`: 4 supplier prices at zero or below.
+# - `assert_order_totals_match_payments`: orders where the provider's payment differs from the order total. Finance's problem,
+#   not a reason to stop the dashboard.
+#
+# ## 2 · Add a relationships test that finds orphans (6')
+#
+# An **orphan** is a row whose reference points at nothing: an order whose customer doesn't exist. Nothing tests
+# `stg_orders.customer_id` yet.
+#
+# ✏️ **Exercise** · Write the YAML for a `customer_id` column with a `relationships` test to `ref('stg_customers')`, field
+# `customer_id`. Copy the shape of `store_id` printed above; the indentation has to line up exactly.
+
+# %%
+def customer_test_yaml():
+    # BEGIN SOLUTION
+    return """      - name: customer_id
         data_tests:
           - relationships:
               arguments:
                 to: ref('stg_customers')
                 field: customer_id
-              config:
-                severity: warn
 """
-# END SOLUTION
-staging_yml.write_text(text.replace(anchor, anchor + NEW_TEST), encoding="utf-8")
+    # END SOLUTION
+
+# %%
+REFERENCE_TEST = """      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+"""
+try:
+    NEW_TEST = customer_test_yaml()
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    NEW_TEST = REFERENCE_TEST
+if not NEW_TEST.endswith("\n"):
+    NEW_TEST += "\n"
+anchor = "      - name: store_id\n"                     # the new column goes just before store_id
+
+
+def write_test(severity=None):
+    """Insert your test into the YAML, with a severity if given."""
+    block = NEW_TEST
+    if severity:
+        block += f"              config:\n                severity: {severity}\n"
+    staging_yml.write_text(text.replace(anchor, block + anchor), encoding="utf-8")
+
+
+write_test()
 res = dbt("test", "--select", "stg_orders")
-res
-
-# %%
 orphans = res[res.node.str.startswith("relationships_stg_orders_customer_id")]
+print("expected: status fail, 1,040 failing rows")
 U.check(len(orphans) == 1 and orphans.failures.iloc[0] == 1040, "the test finds the 1,040 orders of erased customers")
+orphans
 
 # %% [markdown]
-# 🔍 This test **should** warn, not fail: orphans are expected after PDPL erasure, and the marts handle them with the
-# unknown member (`customer_id = -1`). The same test with `error` on `fct_order_items.customer_id → dim_customers` (already
-# in `_marts.yml`) guards the star schema itself, where an orphan would be a bug.
+# 🔍 1,040 orders point at customers who no longer exist. Their customers asked to be erased, so these orphans are expected.
+# In the fact they go to the unknown member, `-1`.
 #
-# ## 3 · Enforce a model contract; watch a type change break the build (5')
+# ## 3 · Choose warn or error (5')
 #
-# `fct_order_items` has an **enforced contract** in `models/marts/_marts.yml`: dbt checks the model's column names and types
-# against the YAML **before** it replaces the table. Downstream dashboards can rely on the shape.
+# Every test has a **severity**. `error` is the default: a failure stops everything downstream. `warn` records it and goes
+# on. See what each does to the models that read `stg_orders`. Set your choice in the second run.
 
 # %%
-print("\n".join(l for l in (PROJ / "models/marts/_marts.yml").read_text(encoding="utf-8").splitlines()[:28]))
+write_test("error")
+as_error = dbt("build", "--select", "stg_orders+")
+print("severity error:", as_error.status.value_counts().to_dict())
+as_error[as_error.type == "model"]
+
+# %%
+MY_SEVERITY = "warn"                                  # ✏️ your choice: "warn" or "error"
+write_test(MY_SEVERITY)
+as_chosen = dbt("build", "--select", "stg_orders+")
+print(f"severity {MY_SEVERITY}:", as_chosen.status.value_counts().to_dict())
+as_chosen[as_chosen.type == "model"]
+
+# %%
+U.check((as_error[as_error.type == "model"].status == "skipped").any(), "with error, the downstream models were skipped")
+if MY_SEVERITY == "warn":
+    U.check((as_chosen[as_chosen.type == "model"].status == "success").all(), "with warn, every model was built")
 
 # %% [markdown]
-# A colleague "improves" the model: quantities can be fractional now (weighed vegetables), so they change the column to a decimal.
+# 🔍 Ask two questions. **What does a wrong number cost compared with a late one?** And **is this failure expected?**
+# Orphans here are expected and handled, so `warn`. But `fct_order_items.customer_id → dim_customers` is already an `error`
+# in the project: there, an orphan means the model has a bug. Every warning needs an owner, or it turns into wallpaper.
 #
-# ✏️ **Exercise** · Make that change in a copy of the model text (`i.quantity,` → `i.quantity::double as quantity,`), write it,
-# run `dbt run --select fct_order_items --full-refresh`, and store the result table in `broken`. Then restore the original file.
-
-# %%
-fct_path = PROJ / "models/marts/fct_order_items.sql"
-original = fct_path.read_text(encoding="utf-8")
-# BEGIN SOLUTION
-fct_path.write_text(original.replace("    i.quantity,\n", "    i.quantity::double as quantity,\n"), encoding="utf-8")
-broken = dbt("run", "--select", "fct_order_items", "--full-refresh")
-fct_path.write_text(original, encoding="utf-8")
-# END SOLUTION
-print(broken.message.iloc[0])
-U.check(broken.status.iloc[0] == "error", "the contract stopped the change before it reached the table")
-U.check(sql("SELECT data_type FROM information_schema.columns WHERE table_name = 'fct_order_items' AND column_name = 'quantity'").data_type[0] == "BIGINT",
-        "the published table still has the agreed type")
-
-# %% [markdown]
-# 🔍 The fix isn't to delete the contract: it's a **versioned** change. Agree on it with consumers, update the contract,
-# and (for big changes) publish `fct_order_items_v2` alongside v1 for a while. dbt supports model versions for exactly this.
+# ## 4 · Validate the supplier files with Pandera (6')
 #
-# ## 4 · Write a dbt unit test for mobile normalization (5')
+# dbt tests look at data already in the warehouse. A supplier's file should be checked **before** it gets in, at the door.
+# **Pandera** does that: rules for a DataFrame, written as a Python class.
 #
-# Data tests check the data you **have**. Unit tests check the logic against the edge cases you **can imagine**, with
-# fixed inputs and expected outputs, before any real data arrives. Look at the existing unit tests in `_staging.yml`
-# (bottom of the file) for the format.
-#
-# ✏️ **Exercise** · Write `models/staging/_unit_customers.yml` with a unit test `test_mobiles_are_normalized_to_e164` on
-# `stg_customers`. Inputs (`source('raw', 'customers')`): customer IDs 1–5 with mobiles `+966501234567`, `0501234567`,
-# `966501234567`, `+966 50 123 4567`, `12345` (and any `national_id`). Expect `mobile_e164` = `+966501234567` for the first four
-# and `null` for the last.
-
-# %%
-# BEGIN SOLUTION
-UNIT = """
-version: 2
-unit_tests:
-  - name: test_mobiles_are_normalized_to_e164
-    model: stg_customers
-    given:
-      - input: source('raw', 'customers')
-        rows:
-          - {customer_id: 1, national_id: "1000000001", mobile: "+966501234567"}
-          - {customer_id: 2, national_id: "1000000002", mobile: "0501234567"}
-          - {customer_id: 3, national_id: "1000000003", mobile: "966501234567"}
-          - {customer_id: 4, national_id: "1000000004", mobile: "+966 50 123 4567"}
-          - {customer_id: 5, national_id: "1000000005", mobile: "12345"}
-    expect:
-      rows:
-        - {customer_id: 1, mobile_e164: "+966501234567"}
-        - {customer_id: 2, mobile_e164: "+966501234567"}
-        - {customer_id: 3, mobile_e164: "+966501234567"}
-        - {customer_id: 4, mobile_e164: "+966501234567"}
-        - {customer_id: 5, mobile_e164: null}
-"""
-# END SOLUTION
-(PROJ / "models/staging/_unit_customers.yml").write_text(UNIT.strip() + "\n", encoding="utf-8")
-unit = dbt("test", "--select", "stg_customers,test_type:unit")
-unit
-
-# %%
-U.check((unit.status == "pass").all() and unit.node.str.contains("e164").any(), "the mobile normalization passes its unit test")
-
-# %% [markdown]
-# Try breaking the macro on purpose (e.g. drop the `(966|0)?` group in `macros/text.sql`) and re-run: the unit test points
-# at the exact rows that changed. Unit tests are cheap; put one on every tricky cleaning rule.
-#
-# ## 5 · Validate supplier files with Pandera; quarantine bad rows (5')
-#
-# Some checks belong **before** the warehouse: a supplier file with garbage should be caught at the door, with a
-# clear report back to the supplier. Pandera validates DataFrames (pandas, Polars, PySpark) against a schema written as a class.
-#
-# Parse all four weekly files into one Polars frame (handling the drift we found on Day 1):
+# Four weekly CSV files arrive, and the format drifts: a renamed column, decimal commas, Arabic digits. The parser is given;
+# read it, then see the rows. **Polars** is the DataFrame library from Day 2.
 
 # %%
 def read_supplier_file(path: Path) -> pl.DataFrame:
@@ -242,79 +200,122 @@ def read_supplier_file(path: Path) -> pl.DataFrame:
         pl.lit(path.name).alias("file"),
     )
 
+
 prices = pl.concat([read_supplier_file(p) for p in sorted((U.RAW / "suppliers").glob("prices_*.csv"))])
 known_skus = sql("SELECT trim(sku) AS sku FROM raw.products").sku.tolist()
 print(prices.shape)
 prices.head(3)
 
 # %% [markdown]
-# ✏️ **Exercise** · Complete the Pandera model `SupplierPrice`: `supplier_id` starts with `SUP-`; `sku` is one of `known_skus`;
-# `unit_cost_sar` is greater than 0 (and not null); `currency` is `SAR`; `min_order_qty` is one of 6, 12, 24, 48.
-# Then validate `prices` with `lazy=True` (collect **all** failures instead of stopping at the first) and catch the
-# `SchemaErrors`: store its `failure_cases` in `failures`.
+# ✏️ **Exercise** · Complete the schema with two rules: `sku` must be one of `known_skus`, and `unit_cost_sar` must be greater
+# than 0.
+#
+# *Hint:* `pa.Field(isin=known_skus)` and `pa.Field(gt=0, nullable=False)`.
 
 # %%
-class SupplierPrice(pa.DataFrameModel):
-    # BEGIN SOLUTION
+def supplier_schema():
+    class SupplierPrice(pa.DataFrameModel):
+        supplier_id: str = pa.Field(str_startswith="SUP-")
+        currency: str = pa.Field(isin=["SAR"])
+        min_order_qty: int = pa.Field(isin=[6, 12, 24, 48])
+        # BEGIN SOLUTION
+        sku: str = pa.Field(isin=known_skus)
+        unit_cost_sar: float = pa.Field(gt=0, nullable=False)
+        # END SOLUTION
+    return SupplierPrice
+
+# %%
+class ReferenceSchema(pa.DataFrameModel):
     supplier_id: str = pa.Field(str_startswith="SUP-")
-    sku: str = pa.Field(isin=known_skus)
-    unit_cost_sar: float = pa.Field(gt=0, nullable=False)
     currency: str = pa.Field(isin=["SAR"])
     min_order_qty: int = pa.Field(isin=[6, 12, 24, 48])
-    # END SOLUTION
+    sku: str = pa.Field(isin=known_skus)
+    unit_cost_sar: float = pa.Field(gt=0, nullable=False)
 
-    class Config:
-        strict = False          # other columns are allowed
 
+try:
+    schema = supplier_schema()
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    schema = ReferenceSchema
 
 failures = None
 try:
-    SupplierPrice.validate(prices, lazy=True)
+    schema.validate(prices, lazy=True)                # lazy=True: report every failure, not just the first
 except pa.errors.SchemaErrors as e:
     failures = e.failure_cases
-failures
+if failures is None or failures.height < 7:           # a rule is missing: the next step needs the full list
+    print("⚠️ Your schema finds too few problems: using the reference schema.")
+    try:
+        ReferenceSchema.validate(prices, lazy=True)
+    except pa.errors.SchemaErrors as e:
+        failures = e.failure_cases
+print("expected: 7 failures, 4 on unit_cost_sar and 3 on sku")
+U.check(failures.height == 7, "seven failing values found")
+failures.select("column", "check", "failure_case", "index")
 
 # %% [markdown]
-# Now **quarantine**: valid rows go on to the warehouse, invalid rows go to a quarantine file with the reason, and the
-# supplier gets the list. `failure_cases` gives row `index` positions in `prices`.
+# ## 5 · Quarantine the bad rows (3')
+#
+# Rejecting the whole file for 7 bad rows leaves Purchasing with nothing. Loading it all lets bad prices in. **Quarantine** is
+# the middle way: good rows go on, bad rows go aside with the reason, and someone gets the list.
 
 # %%
-bad_idx = failures["index"].unique().to_list()
 reasons = failures.group_by("index").agg(pl.col("check").str.join("; ").alias("reason"))
-prices_i = prices.with_row_index("index").with_columns(pl.col("index").cast(pl.Int32))
-quarantine = prices_i.join(reasons, on="index", how="inner")
-clean = prices_i.join(reasons, on="index", how="anti").drop("index")
+numbered = prices.with_row_index("index").with_columns(pl.col("index").cast(pl.Int32))
+quarantine = numbered.join(reasons, on="index", how="inner")
+clean = numbered.join(reasons, on="index", how="anti").drop("index")
 quarantine.write_csv(OUT / "supplier_prices_quarantine.csv")
 clean.write_parquet(OUT / "supplier_prices_clean.parquet")
-print(f"{clean.height} clean rows, {quarantine.height} quarantined")
+print(f"{clean.height} clean rows go on, {quarantine.height} go to quarantine")
 quarantine.select("file", "sku", "unit_cost_sar", "reason")
 
 # %%
 U.check(quarantine.height == 7, "4 bad costs + 3 unknown SKUs quarantined")
-U.check(clean.filter(pl.col("file") == "prices_2026-W38.csv").height == 160, "week 38's commas and Arabic digits parsed, not rejected")
+U.check(clean.filter(pl.col("file") == "prices_2026-W38.csv").height == 160, "week 38's commas and Arabic digits were parsed, not rejected")
 
 # %% [markdown]
-# 🔍 Week 38 passes now because we **parse** it correctly; week 39 passes **structurally** (we mapped `cost_sar`) but
-# seven rows are quarantined. Validation at the door, tests in the warehouse, and contracts with producers (Day 4)
-# are three layers of the same defence.
+# 🔍 Who reads `supplier_prices_quarantine.csv`? If nobody owns it, quarantine is just a slow way to lose data. Name the
+# person for your capstone.
 #
-# ## ✱ Stretch · Store test failures in the warehouse and query them
+# ## ✱ Stretch · Store the failing rows in the warehouse
 #
-# `dbt test --store-failures` writes the failing rows of each test into tables so
-# you can inspect, alert on, or report them (here in a `dbt_test__audit` schema). Run it for the warning tests and look at the stored rows of the payments test.
+# `dbt test --store-failures` saves each failing test's rows as a table, so you can query or report them. Run it for the
+# payments test and look at the biggest differences.
 
 # %%
-# BEGIN SOLUTION
-dbt("test", "--select", "assert_order_totals_match_payments positive_stg_order_items_quantity", "--store-failures")
-audit = sql("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema LIKE '%audit%'")
-display(audit)
-display(sql(f"SELECT * FROM {audit.table_schema[0]}.assert_order_totals_match_payments ORDER BY abs(difference) DESC LIMIT 5"))
-# END SOLUTION
+def stretch():
+    # BEGIN SOLUTION
+    dbt("test", "--select", "assert_order_totals_match_payments", "--store-failures")
+    audit = sql("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema LIKE '%audit%'")
+    display(audit)
+    display(sql(f"SELECT * FROM {audit.table_schema[0]}.assert_order_totals_match_payments ORDER BY abs(difference) DESC LIMIT 5"))
+    # END SOLUTION
+
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write stretch() above if you have time.")
 
 # %% [markdown]
 # ## Checkpoint
 #
-# 1. Name one Qafila check that should **error** and one that should **warn**, and say who gets told in each case.
-# 2. What does a contract protect that a `not_null` test doesn't?
-# 3. Why write unit tests if data tests already run on every build?
-# 4. Where in the pipeline would you validate the supplier files if they arrived by SFTP every Monday at 06:00?
+# 1. A `relationships` test on `stg_orders.customer_id` fails with 1,040 rows. Warn or error, and why?
+# 2. With severity `error`, what happens to the models downstream, and what do they keep?
+# 3. Why check supplier files with Pandera when dbt can test the same rule?
+#
+# <details><summary>Answers</summary>
+#
+# 1. Warn: the orphans come from erased customers, they're expected, and the fact maps them to `-1`. Someone still owns the warning.
+# 2. They're skipped, and keep what they held from their last build: stale but not wrong.
+# 3. dbt tests data already in the warehouse. Pandera stops a bad row before it's loaded, and gives the supplier a list of exactly which rows to fix.
+#
+# </details>
+#
+# ## Carry forward
+#
+# Lab 3.4 runs the project's tests on a schedule, and adds checks of its own that can block the rows behind them. It starts
+# from a fresh copy.
+#
+# Want more? `tools/pandera.ipynb`.

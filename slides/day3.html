@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 3 · Modern Data Engineering</title>
+<link rel="icon" href="https://sdaiaacademy.github.io/slides/icon.svg">
+<link rel="stylesheet" href="https://sdaiaacademy.github.io/slides/deck.css">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<div class="deck" data-course="Modern Data Engineering" data-track="ai-engineering" data-day="Day 3">
+<section class="slide title" data-label="Welcome">
+  <div class="kicker">SDAIA Academy · Modern Data Engineering</div>
+  <h1>Model and test</h1>
+  <p class="lead mt">Day 3: shape the data for the questions, build it with dbt, test it, and run it every night</p>
+  <div class="meta">
+    <span class="track">AI Engineering</span>
+    <span>4 teaching days + capstone day</span>
+    <span>4 sessions · 4 labs</span>
+    <span>Fresh CS graduates</span>
+  </div>
+  <aside class="notes">Yesterday you got Qafila's data in and cleaned it. Today you make it answer questions and keep answering them correctly. Khalid's order 5043883 stays with us: today it becomes two rows in a fact table.</aside>
+</section>
+
+<section class="slide" data-label="Review">
+  <div class="kicker">Yesterday</div>
+  <h2>Review: cursors and idempotency</h2>
+  <div class="quiz">
+    <p class="lead">Your paged load crashes halfway, and you rerun it from the last saved cursor. Some rows come in a second time. What keeps the table right?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">Run it only at night, when nothing else is writing</div>
+      <div class="opt" data-k="B">Delete the table and do a full load after every crash</div>
+      <div class="opt" data-k="C" data-ok>A small overlap on the cursor, plus an upsert on the primary key</div>
+      <div class="opt" data-k="D">Save the cursor before writing the page, never after</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> An idempotent load: running it twice gives the same table. Upserting on the key makes repeats harmless, so a retry is safe. Saving the cursor first is what loses rows.</div>
+  </div>
+  <aside class="notes">Review of Lab 2.1 and Lab 2.2. Answer C. In the Day 2 run, a rerun of the merge load stayed at 29,526 rows. Saving the cursor before writing means a crash skips those rows for good.</aside>
+</section>
+
+<section class="slide" data-label="Review">
+  <div class="kicker">Yesterday</div>
+  <h2>Review: CDC and MERGE</h2>
+  <div class="quiz">
+    <p class="lead">A customer changes city twice in one evening, and the two CDC events reach you in the wrong order. What do you do before the MERGE?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>Keep the latest change per customer, ordered by the log position (lsn)</div>
+      <div class="opt" data-k="B">Keep the event that arrived last</div>
+      <div class="opt" data-k="C">Apply both in arrival order, since MERGE sorts them out</div>
+      <div class="opt" data-k="D">Throw both away and copy the whole table again</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Arrival order isn't change order. Sort by lsn and keep one row per key, and MERGE then applies each customer's true last state. Updates, inserts and deletes all go through the same statement.</div>
+  </div>
+  <aside class="notes">Review of Lab 2.3. Answer A. CDC: change data capture, the feed of every change from the app's database. Customer 100898 from yesterday ended in the wrong city when events were applied in arrival order.</aside>
+</section>
+
+<section class="slide " data-label="Agenda">
+  <div class="kicker">Today</div>
+  <h2>Today: from clean rows to answers you can trust</h2>
+  <div class="agenda">
+    <div class="item now"><div><b>Session 1 · Dimensional modeling</b><small>What revenue means, what one row means, and the star that answers both</small></div></div>
+    <div class="item"><div><b>Session 2 · dbt</b><small>The same star as a project: sources, ref, staging to marts, one build command</small></div></div>
+    <div class="item"><div><b>Session 3 · Data quality</b><small>dbt tests, warn or error, Pandera at the door, quarantine</small></div></div>
+    <div class="item"><div><b>Session 4 · Orchestration with Dagster</b><small>Assets, a graph, a schedule, and checks that stop bad data</small></div></div>
+  </div>
+  <aside class="notes">Four sessions, one thread: design the tables, build them with a tool, test them, then let a machine run them. Each lab starts from the raw data, so missing one never blocks the next.</aside>
+</section>
+
+<section class="slide " data-label="Map">
+  <div class="kicker">You are here</div>
+  <h2>Today's stretch of the platform</h2>
+  <p class="lead small">Yesterday lit up ingest. Today is the transform stage, the checks at the door, and the conductor over it all.</p>
+  <div class="pmap" data-here="dbt,pandera,dagster"></div>
+  <aside class="notes">The map from Day 1. dbt transforms inside the warehouse. Pandera checks files before they get in. Dagster starts everything and records what happened. A star schema isn't on the map because it's a design, not a tool: it needs no software at all, which is why we begin there.</aside>
+</section>
+
+<section class="slide section" data-session="S1 · Dimensional modeling">
+  <div class="kicker">Session 1</div>
+  <h1>Dimensional modeling</h1>
+  <ul class="bullets outcomes">
+    <li>Write down what a number means before computing it</li>
+    <li>State the grain of a table, and test it</li>
+    <li>Build a star, and avoid fan-out and lost sales</li>
+  </ul>
+  <div class="sess-no">01</div>
+  <aside class="notes">This session needs no new tool: dimensional modeling is a design method, and the lab builds the result in plain SQL. Only you can decide what one row means.</aside>
+</section>
+
+<section class="slide top" data-label="The question">
+  <h2>Finance asks: how much did we sell?</h2>
+  <p class="lead small">August and September, the same order lines. Every follow-up question changes the total.</p>
+  <div class="board"><figure class="figure" data-id="f-fin" style="left:0px;top:60px;width:190px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption><p class="detail">“How much did we sell?”</p></figure><p class="annotation teal" style="left:240px;top:5px;width:330px">Add up every order line?</p><div class="label answer" data-id="a1" style="left:600px;top:0px;width:480px"><b>7,343,425 SAR</b>172,545 lines, whatever happened to the order</div><div class="label rec order" data-id="k1" style="left:1110px;top:10px;width:330px"><b>Khalid’s order</b><span>both lines</span><i>80.50</i></div><p class="annotation teal" style="left:240px;top:170px;width:330px">But 5,347 orders never reached a customer. Leave them out?</p><div class="label answer" data-id="a2" style="left:600px;top:165px;width:480px"><b>6,494,684 SAR</b>delivered orders only</div><div class="label rec order" data-id="k2" style="left:1110px;top:175px;width:330px"><b>Khalid’s order</b><span>delivered, so it counts</span><i>80.50</i></div><p class="annotation teal" style="left:240px;top:335px;width:330px">Is the delivery fee a sale too?</p><div class="label answer" data-id="a3" style="left:600px;top:330px;width:480px"><b>6,843,884 SAR</b>delivered, plus 349,200 SAR of delivery fees</div><div class="label rec order" data-id="k3" style="left:1110px;top:340px;width:330px"><b>Khalid’s order</b><span>lines + the 9.00 fee</span><i>89.50</i></div></div>
+  <div class="callout tip"><b>Takeaway.</b> Three totals, all correct. <strong>The question is incomplete</strong> until someone says what counts.</div>
+  <aside class="notes">Finance asks how much we sold. All lines: 7,343,425 SAR. Leave out the 5,347 orders that never reached a customer (3,266 cancelled, 964 refunded, 1,117 failed delivery): 6,494,684. Add the 349,200 SAR of delivery fees on delivered orders: 6,843,884, and Khalid's order counts 89.50, what he paid. Nobody made a mistake: each answers a slightly different question. Ask the room which one belongs on the CEO's dashboard, and why.</aside>
+</section>
+
+<section class="slide top" data-label="The definition">
+  <h2>Write the definition down, once</h2>
+  <p class="lead small">Every team that asks “how much did we sell?” gets the number from the same rule.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-1-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-1-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-1-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2_2_modeling-1-em)" data-id="w-fin" d="M195 150 L410 150"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-1-em)" data-id="w-ops" d="M1245 150 L1030 150"/></svg><figure class="figure" data-id="f-fin" style="left:0px;top:40px;width:190px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption></figure><figure class="figure" data-id="f-ops" style="left:1250px;top:40px;width:190px;margin:0"><div class="art operations" aria-hidden="true"></div><figcaption>Operations</figcaption></figure><div class="stage-box gold" data-id="definition" style="left:420px;top:20px;width:600px"><h3>Product revenue</h3><p>net amount of <b>delivered</b> lines with a <b>positive quantity</b></p><p>Delivery fees: a separate number</p><p>City: the <b>store’s</b> city</p><span class="tag">written in the model, not in each report</span></div><div class="label answer center" data-id="a2" style="left:420px;top:330px;width:600px"><b>6,500,179 SAR</b>for everyone, every time</div></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Business definition:</strong> the agreed meaning of a number. A <strong>model</strong>, tables shaped for questions, writes it down once.</div>
+  <aside class="notes">Why 6,500,179 and not 6,494,684? 142 lines have a quantity of zero or below: entry errors, not refunds, since refunds are an order status. 129 of them sit on delivered orders and subtract 5,495 SAR. Leave them out and you get 6,500,179. In Lab 3.3 they aren't lost: they go to a quarantine table. City needs a decision too: the customer's city and the store's differ on 7,899 of 44,726 orders with a known customer, so we choose the store's. Once the rule lives in the model, teams stop arguing about numbers.</aside>
+</section>
+
+<section class="slide top" data-label="Grain">
+  <h2>One row per what?</h2>
+  <p class="lead small">The sales could be stored three ways. Where does Khalid’s order end up in each?</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-3-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-3-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-3-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure frame" data-id="pick" d="M496 -12 L949 -10 Q957 -9 955 1 L953 289 Q954 300 943 298 L490 297 Q483 298 485 285 L486 -3 Q485 -13 496 -12Z"/></svg><div class="label reason" data-id="g-order" style="left:0px;top:0px;width:440px"><b>One row per order</b></div><div class="label rec order" data-id="ord" style="left:0px;top:70px;width:440px"><b>order 5043883</b><span>RUH-05 · 2 lines</span><i>80.50</i></div><div class="label reason" data-id="g-line" style="left:500px;top:0px;width:440px"><b>One row per order line</b></div><div class="label rec line " data-id="l1" style="left:500px;top:70px;width:440px"><b>5043883 · line 1</b><span>Sahra Cucumbers · 1 × 4.74</span><i>4.74</i></div><div class="label rec line " data-id="l2" style="left:500px;top:155px;width:440px"><b>5043883 · line 2</b><span>Al Waha Arabic Coffee · 2 × 37.88</span><i>75.76</i></div><div class="label reason" data-id="g-day" style="left:1000px;top:0px;width:440px"><b>One row per store and day</b></div><div class="label rec day" data-id="day" style="left:1000px;top:70px;width:440px"><b>RUH-05 · 28 Sep</b><span>25 delivered orders</span><i>4,400.65</i></div><p class="annotation red" style="left:0px;top:170px;width:440px">One row: which products? Gone</p><p class="annotation teal" style="left:500px;top:250px;width:440px">Two rows: every product kept</p><p class="annotation red" style="left:1000px;top:170px;width:440px">Khalid’s order is one of 25 inside this number</p><p class="annotation " style="left:0px;top:400px;width:1440px">Lines add up to orders or days. A day never splits back into lines.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Grain:</strong> what one row of a table stands for. Take the finest grain the questions need: here, the order line.</div>
+  <aside class="notes">The order table loses the products. The daily table loses the order itself: RUH-05 delivered 25 orders worth 4,400.65 SAR on 28 September. Both are fine summaries, and both can be built from lines later; a day never splits back into lines. So the sales table is one row per order line. Common failure: writing 'sales data' as the grain. A grain must name the thing one row stands for.</aside>
+</section>
+
+<section class="slide top" data-label="Grain">
+  <h2>Our fact table: one row per order line</h2>
+  <p class="lead small">fct_order_items. Its key is order_id + line_no, and a key is a claim the data must pass.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-4-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-4-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-4-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="fct" d="M311 0 L1114 2 Q1122 3 1120 13 L1118 321 Q1119 332 1108 330 L305 329 Q298 330 300 317 L301 9 Q300 -1 311 0Z"/></svg><div class="label hand teal" data-id="fct-title" style="left:330px;top:15px;width:400px">fct_order_items</div><div class="label muted" data-id="fct-grain" style="left:760px;top:22px;width:330px">one row per order line</div><div class="label rec line " data-id="l1" style="left:330px;top:75px;width:760px"><b>5043883 · line 1</b><span>product 1104 · 1 × 4.74 − discount 0</span><i>4.74</i></div><div class="label rec line " data-id="l2" style="left:330px;top:160px;width:760px"><b>5043883 · line 2</b><span>product 1193 · 2 × 37.88 − discount 0</span><i>75.76</i></div><div class="label sum" data-id="sum" style="left:330px;top:260px;width:760px"><b>80.50</b> SAR</div><div class="label reason" data-id="key" style="left:0px;top:75px;width:270px"><b>The key</b><br>order_id + line_no</div><div class="stage-box silver" data-id="test" style="left:1140px;top:0px;width:300px"><h3>Test the claim</h3><div class="data-row"><span>lines</span><span>172,545</span></div><div class="data-row"><span>keys</span><span>172,545</span></div><span class="tag">✓ the grain holds</span></div><p class="annotation teal" style="left:330px;top:380px;width:760px">net_amount = quantity × unit_price − discount</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Fact table:</strong> one row per business event, at the declared grain. Test it: as many rows as distinct keys.</div>
+  <aside class="notes">A fact table holds one row per business event, with keys and numbers. Khalid's two rows: 4.74 and 75.76, so 80.50 SAR. Lab 3.1 task 2 counts rows and distinct (order_id, line_no) pairs: 172,545 each, so the grain holds. Why not order_id + product_id? One order can hold the same product on two lines. fct_ is the usual prefix for a fact table, and dim_ for a dimension: you'll see both in every project.</aside>
+</section>
+
+<section class="slide top" data-label="Fan-out">
+  <h2>Now add the columns up</h2>
+  <p class="lead small">A join makes one row per match, so the fee sits on both of Khalid’s lines. SUM can’t know they’re the same 9.00.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-8-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-8-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-8-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2_2_modeling-8-em)" data-id="w-j1" d="M524 80 C610 80 610 140 694 140"/><path class="wire danger" marker-end="url(#arr-D2_2_modeling-8-danger)" data-id="w-j2" d="M524 330 C620 330 630 150 694 148"/><path class="wire danger" marker-end="url(#arr-D2_2_modeling-8-danger)" data-id="w-j3" d="M524 336 C630 336 640 178 694 176"/></svg><div class="label tbl mono" data-id="j-items" style="left:0px;top:0px;width:520px"><div class="t-title">fct_order_items</div><div class="t-row h" style="grid-template-columns:120px 90px 1fr"><span>order_id</span><span>line_no</span><span>net_amount</span></div><div class="t-row " style="grid-template-columns:120px 90px 1fr"><span><em class="k">5043883</em></span><span>1</span><span>4.74</span></div><div class="t-row " style="grid-template-columns:120px 90px 1fr"><span><em class="k">5043883</em></span><span>2</span><span>75.76</span></div></div><div class="label tbl mono" data-id="j-orders" style="left:0px;top:250px;width:520px"><div class="t-title">orders</div><div class="t-row h" style="grid-template-columns:120px 1fr"><span>order_id</span><span>delivery_fee</span></div><div class="t-row " style="grid-template-columns:120px 1fr"><span><em class="k">5043883</em></span><span>9.00</span></div></div><div class="label tbl mono" data-id="joined" style="left:700px;top:60px;width:740px"><div class="t-title">fct_order_items JOIN orders</div><div class="t-row h" style="grid-template-columns:120px 90px 1fr 1fr"><span>order_id</span><span>line_no</span><span>net_amount</span><span>delivery_fee</span></div><div class="t-row " style="grid-template-columns:120px 90px 1fr 1fr"><span>5043883</span><span>1</span><span>4.74</span><span><em class="k bad">9.00</em></span></div><div class="t-row " style="grid-template-columns:120px 90px 1fr 1fr"><span>5043883</span><span>2</span><span>75.76</span><span><em class="k bad">9.00</em></span></div><div class="t-row total" style="grid-template-columns:120px 90px 1fr 1fr"><span>SUM</span><span></span><span>80.50 ✓</span><span><em class="k bad">18.00 ✗</em></span></div></div><div class="label answer" data-id="q-total" style="left:700px;top:300px;width:340px"><b style="color:#b96251">98.50</b>what the query reports</div><div class="label rec copy" data-id="pay" style="left:1080px;top:310px;width:360px"><b>pay_9040078</b><span>captured from Khalid’s card</span><i>89.50</i></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Fan-out:</strong> joining a coarser grain onto a finer one repeats its numbers. Nothing fails; the total is just bigger.</div>
+  <aside class="notes">Read the board left to right. The join on order_id gives two rows, and each copies the order's columns: delivery_fee 9.00 twice. That's what a join is supposed to do. SUM(net_amount) is right, 80.50, because it was already at line grain. SUM(delivery_fee) is 18.00 for a 9.00 fee. 98.50 reported, while the payment provider captured 89.50 (payment pay_9040078). Nothing in the SQL is wrong; the grain is.</aside>
+</section>
+
+<section class="slide top" data-label="Fan-out">
+  <h2>At Qafila’s scale, nobody notices</h2>
+  <p class="lead small">The same query over every delivered order. No error, no warning: just a bigger number on the dashboard.</p>
+  <div class="board"><figure class="figure" data-id="f-fin" style="left:0px;top:40px;width:200px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption><p class="detail">“Revenue is up?”</p></figure><div class="label answer" data-id="s-right" style="left:300px;top:0px;width:560px"><b>6,849,334 SAR</b>products + fees, each fee counted once</div><div class="label answer" data-id="s-wrong" style="left:300px;top:165px;width:560px"><b style="color:#b96251">7,816,825 SAR</b>the same, through the fan-out query</div><p class="annotation red" style="left:300px;top:340px;width:640px">967,491 SAR of fees that were never charged</p><p class="annotation teal" style="left:960px;top:10px;width:480px">Where else could it bite?</p><div class="label rec src" data-id="w-pay" style="left:960px;top:70px;width:480px"><b>payments</b><span>several attempts per order</span></div><div class="label rec src" data-id="w-evt" style="left:960px;top:170px;width:480px"><b>delivery events</b><span>about four per order</span></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>The fan-out hides in plain sight:</strong> an order has 3.8 lines on average, so its fee is counted 3.8 times.</div>
+  <aside class="notes">Lab 3.1 task 5 reproduces this: the naive query says 7,816,825 SAR, the right answer is 6,849,334. That's 14.1% too high, and no error anywhere. An order has 3.8 lines on average. The same trap waits wherever a table has several rows per order: payment retries, delivery events. If someone asks why 6,849,334 isn't 6,500,179 + 349,200: 5 delivered orders hold only bad lines, so they have no row in the fact, and their 45 SAR of fees aren't counted.</aside>
+</section>
+
+<section class="slide top" data-label="The fix">
+  <h2>Roll the lines up, then add the fee</h2>
+  <p class="lead small">Bring both sides to one row per order before combining them.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-10-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-10-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-10-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="fct" d="M-1 70 L447 72 Q455 73 453 83 L451 261 Q452 272 441 270 L-7 269 Q-14 270 -12 257 L-11 79 Q-12 69 -1 70Z"/><path class="enclosure blue" data-id="grain-o" d="M556 70 L1434 72 Q1442 73 1440 83 L1438 261 Q1439 272 1428 270 L550 269 Q543 270 545 257 L546 79 Q545 69 556 70Z"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-10-em)" data-id="w-r1" d="M442 125 C500 125 500 162 552 162"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-10-em)" data-id="w-r2" d="M442 210 C500 210 500 170 552 170"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-10-em)" data-id="w-t1" d="M1022 167 L1056 167"/></svg><div class="label hand teal" data-id="fl-title" style="left:0px;top:10px;width:460px">fct_order_items · one row per line</div><div class="label rec line " data-id="l1" style="left:0px;top:90px;width:440px"><b>5043883 · line 1</b><span>Sahra Cucumbers · 1 × 4.74</span><i>4.74</i></div><div class="label rec line " data-id="l2" style="left:0px;top:175px;width:440px"><b>5043883 · line 2</b><span>Al Waha Arabic Coffee · 2 × 37.88</span><i>75.76</i></div><div class="label hand blue" data-id="fo-title" style="left:560px;top:10px;width:600px">fct_orders · one row per order</div><div class="label rec order" data-id="ord" style="left:560px;top:132px;width:330px"><b>order 5043883</b><span>items_amount</span><i>80.50</i></div><div class="label fee " data-id="fee" style="left:906px;top:149px;width:110px">fee 9.00</div><div class="label rec day" data-id="tot" style="left:1060px;top:132px;width:370px"><b>order 5043883</b><span>items + fee</span><i>89.50</i></div><div class="label sum" data-id="sum" style="left:1060px;top:290px;width:380px"><b>89.50</b> SAR ✓ what Khalid paid</div><p class="annotation teal" style="left:0px;top:330px;width:1000px">dbt’s fct_orders is built this way (Lab 3.2)</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Combine facts at a shared grain:</strong> add the lines up first, join second.</div>
+  <aside class="notes">Group the lines by order_id: 4.74 + 75.76 = 80.50. The order side is already one row per order, so a join can't repeat anything. Add the fee once: 89.50, what the provider captured. SUM(DISTINCT delivery_fee) looks like a shortcut but is wrong: two different orders that both pay 9.00 would count one fee. Lab 3.1 task 5 asks for this fix.</aside>
+</section>
+
+<section class="slide top" data-label="Dimensions">
+  <h2>Descriptions move out to dimensions</h2>
+  <p class="lead small">The fact keeps keys and numbers. Each description is stored once around it, one join away: a star.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-11-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-11-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-11-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="fct" d="M431 110 L1014 112 Q1022 113 1020 123 L1018 401 Q1019 412 1008 410 L425 409 Q418 410 420 397 L421 119 Q420 109 431 110Z"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-11-em)" data-id="w-date" d="M418 185 C395 185 405 70 384 70"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-11-em)" data-id="w-store" d="M418 355 C395 355 405 355 384 355"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-11-em)" data-id="w-product" d="M1022 185 C1045 185 1035 70 1056 70"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-11-em)" data-id="w-customer" d="M1022 355 C1045 355 1035 375 1056 375"/></svg><div class="label hand teal" data-id="fct-title" style="left:440px;top:120px;width:300px">fct_order_items</div><div class="label rec line " data-id="l1" style="left:440px;top:185px;width:560px"><b>5043883 · line 1</b><span>2026-09-28 · 1104 · RUH-05 · 107371</span><i>4.74</i></div><div class="label rec line " data-id="l2" style="left:440px;top:290px;width:560px"><b>5043883 · line 2</b><span>2026-09-28 · 1193 · RUH-05 · 107371</span><i>75.76</i></div><div class="label caption" data-id="key-order" style="left:700px;top:128px;width:300px">date · product · store · customer</div><div class="label tbl " data-id="dim-date" style="left:0px;top:0px;width:380px"><div class="t-title">dim_date</div><div class="t-row " style="grid-template-columns:105px 1fr"><span>2026-09-28</span><span>Monday 28 Sep · weekday</span></div><div class="t-row more" style="grid-template-columns:100px 1fr"><span></span><span>month · week · National Day</span></div></div><div class="label tbl " data-id="dim-product" style="left:1060px;top:0px;width:380px"><div class="t-title">dim_products</div><div class="t-row " style="grid-template-columns:50px 1fr"><span>1104</span><span>Cucumbers · Fruits & Veg.</span></div><div class="t-row " style="grid-template-columns:50px 1fr"><span>1193</span><span>Arabic Coffee · Dates & Coffee</span></div></div><div class="label tbl " data-id="dim-store" style="left:0px;top:300px;width:380px"><div class="t-title">dim_stores</div><div class="t-row " style="grid-template-columns:70px 1fr"><span>RUH-05</span><span>Al Naseem · Riyadh</span></div></div><div class="label tbl " data-id="dim-customer" style="left:1060px;top:300px;width:380px"><div class="t-title">dim_customers</div><div class="t-row " style="grid-template-columns:70px 1fr"><span>107371</span><span>Riyadh · Al Malqa</span></div><div class="t-row more" style="grid-template-columns:70px 1fr"><span></span><span>no name, mobile or national ID</span></div></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Dimension:</strong> a table of descriptions to filter and group by. <strong>Star schema:</strong> the fact in the middle, one join to each dimension.</div>
+  <aside class="notes">Each fact row holds four keys and its numbers; each description is stored once. Keep the store name on every line instead and 'Al Naseem, Riyadh' repeats on 8,643 lines, 'Fruits & Vegetables' on 31,416. The keys are the ids the source already uses. Many warehouses mint their own integer key, a surrogate key; we don't need one here. order_date is the Riyadh date: the app wrote 27 September 22:35 UTC, which is 28 September in Riyadh, a Monday. dim_date also flags weekends (Friday, Saturday) and National Day. By category: join dim_products and group. Dates & Coffee leads with 1,750,079 SAR.</aside>
+</section>
+
+<section class="slide top" data-label="Keys">
+  <h2>An inner join silently drops sales</h2>
+  <p class="lead small">Some customers asked to be erased. Their orders stay, but their customer_id matches no row in dim_customers.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-13-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-13-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-13-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2_2_modeling-13-em)" data-id="w-c243" d="M562 55 C700 55 720 110 856 110"/><path class="wire danger dashed" marker-end="url(#arr-D2_2_modeling-13-danger)" data-id="w-c37a" d="M562 175 C650 175 680 190 740 190"/><path class="wire danger dashed" marker-end="url(#arr-D2_2_modeling-13-danger)" data-id="w-c37b" d="M562 260 C650 260 680 200 740 200"/></svg><div class="label rec line " data-id="l1" style="left:0px;top:20px;width:560px"><b>5043883 · line 1</b><span>customer_id 107371</span><i>4.74</i></div><div class="label rec line lost" data-id="l37-1" style="left:0px;top:140px;width:560px"><b>5000037 · line 1</b><span>customer_id 104353</span><i>12.84</i></div><div class="label rec line lost" data-id="l37-2" style="left:0px;top:225px;width:560px"><b>5000037 · line 2</b><span>customer_id 104353</span><i>43.54</i></div><div class="label ptr red" data-id="miss" style="left:748px;top:178px;width:30px">✕</div><div class="label tbl mono" data-id="dim-customer" style="left:860px;top:20px;width:580px"><div class="t-title">dim_customers</div><div class="t-row h" style="grid-template-columns:150px 150px 1fr"><span>customer_id</span><span>district</span><span>city</span></div><div class="t-row hit" style="grid-template-columns:150px 150px 1fr"><span>107371</span><span>Al Malqa</span><span>Riyadh</span></div><div class="t-row " style="grid-template-columns:150px 150px 1fr"><span>107372</span><span>Sulimaniyah</span><span>Riyadh</span></div></div><p class="annotation " style="left:860px;top:175px;width:580px">No row for 104353: erased, on request</p><figure class="figure" data-id="f-cmp" style="left:1270px;top:250px;width:150px;margin:0"><div class="art steward" aria-hidden="true"></div><figcaption>Compliance</figcaption><p class="detail">erases on request</p></figure><p class="annotation red" style="left:0px;top:340px;width:800px">Inner join: 1,040 orders, 3,928 lines and 163,949 SAR disappear, with no error</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Missing references are normal</strong>, here erased customers. The model must still keep the sale.</div>
+  <aside class="notes">Order 5000037 from JED-04: its customer 104353 was later erased from the app, a PDPL erasure request, so the inner join finds no customer row and drops both lines. PDPL is Saudi Arabia's personal data law; Day 4 covers it. Across the data: 1,040 orders, 3,928 lines, 163,949 SAR of sales gone without any error, and the totals by city quietly stop matching Finance.</aside>
+</section>
+
+<section class="slide top" data-label="Keys">
+  <h2>An “Unknown” row keeps every sale</h2>
+  <p class="lead small">Add one dimension row with id −1 before loading facts. A line without a match points there.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D2_2_modeling-14-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-14-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D2_2_modeling-14-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D2_2_modeling-14-em)" data-id="w-c243" d="M562 55 C700 55 720 110 856 110"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-14-em)" data-id="w-c37a" d="M562 175 C700 175 720 176 856 176"/><path class="wire em" marker-end="url(#arr-D2_2_modeling-14-em)" data-id="w-c37b" d="M562 260 C700 260 720 184 856 184"/></svg><div class="label rec line " data-id="l1" style="left:0px;top:20px;width:560px"><b>5043883 · line 1</b><span>customer_id 107371</span><i>4.74</i></div><div class="label rec line " data-id="l37-1" style="left:0px;top:140px;width:560px"><b>5000037 · line 1</b><span>customer_id 104353 → −1</span><i>12.84</i></div><div class="label rec line " data-id="l37-2" style="left:0px;top:225px;width:560px"><b>5000037 · line 2</b><span>customer_id 104353 → −1</span><i>43.54</i></div><div class="label tbl mono" data-id="dim-customer" style="left:860px;top:20px;width:580px"><div class="t-title">dim_customers</div><div class="t-row h" style="grid-template-columns:150px 150px 1fr"><span>customer_id</span><span>district</span><span>city</span></div><div class="t-row hit" style="grid-template-columns:150px 150px 1fr"><span>107371</span><span>Al Malqa</span><span>Riyadh</span></div><div class="t-row " style="grid-template-columns:150px 150px 1fr"><span>107372</span><span>Sulimaniyah</span><span>Riyadh</span></div><div class="t-row unk" style="grid-template-columns:150px 150px 1fr"><span>-1</span><span>Unknown</span><span>Unknown</span></div></div><div class="label code" data-id="sql" style="left:0px;top:340px;width:800px">LEFT JOIN dim_customers c … COALESCE(c.customer_id, -1)</div><p class="annotation teal" style="left:0px;top:400px;width:800px">3,928 lines stay, grouped under “Unknown”: count them and watch the number</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Unknown member:</strong> a dimension row for “no match”. Then <strong>reconcile</strong>: every source line is in the fact or set aside on purpose.</div>
+  <aside class="notes">Lab 3.1 adds the -1 row to dim_customers, and the fact uses COALESCE. Every line keeps a valid reference, and 'Unknown' shows up honestly in reports. Watch that count: a sudden jump means a source problem, not a burst of privacy requests. Then reconcile, in rows and money: 172,545 source lines = 172,403 in the fact + 142 set aside, and 7,349,442 SAR on both sides. Check both, because equal counts can hide one lost row and one duplicate.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">Purchasing wants revenue per product category. Operations wants revenue per store and day. What should the fact table's grain be?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">One row per order, since an order is what a customer places</div>
+      <div class="opt" data-k="B">One row per store and day, since that's the most common report</div>
+      <div class="opt" data-k="C">One row per category and day, plus a second table for stores</div>
+      <div class="opt" data-k="D" data-ok>One row per order line: both reports can be added up from it</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Take the finest grain the questions need. Lines add up to stores, days and categories; an order row has already lost its products, and a daily row can't split back.</div>
+  </div>
+  <aside class="notes">Answer D. A tempting wrong answer is A: orders feel natural, but one order holds several products, so category revenue is impossible.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 3.1">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 3.1 · 25 min</div>
+      <h2>A star schema for Qafila</h2>
+      <p class="lead small">Write the definition, test the grain, build the star by hand, and walk into the fan-out on purpose.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_1_dimensional_modeling.ipynb" target="_blank" rel="noopener">labs/D3_1_dimensional_modeling.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>1 · Compare three revenue totals <span class="min">4 min</span></li>
+      <li>2 · Test the grain of the order lines <span class="min">4 min</span></li>
+      <li>3 · Build the dimensions with an unknown member <span class="min">6 min</span></li>
+      <li>4 · Build the fact table and reconcile it <span class="min">6 min</span></li>
+      <li>5 · Spot the fan-out and fix it <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Measure the National Day uplift per city</li>
+    </ul>
+  </div>
+  <aside class="notes">Everything is plain SQL on a private copy of the warehouse. Every exercise has a safety net, so nobody gets stuck. Task 3 is the one people rush: read the inner-join loss before writing the UNION ALL. Typical failure in task 5: filtering on the status twice, or forgetting GROUP BY. Expected: revenue 6,500,179 SAR; naive 7,816,825 against fixed 6,849,334.</aside>
+</section>
+
+<section class="slide section" data-session="S2 · dbt">
+  <div class="kicker">Session 2</div>
+  <h1>dbt</h1>
+  <ul class="bullets outcomes">
+    <li>Turn a folder of SELECTs into a star, built in the right order</li>
+    <li>Use source and ref, and choose view or table</li>
+    <li>Read the lineage dbt works out for itself</li>
+  </ul>
+  <div class="sess-no">02</div>
+  <aside class="notes">dbt is the industry's usual tool for the T in ELT: transforming inside the warehouse. It doesn't load anything. Tool names change; the idea of a graph of SELECTs won't.</aside>
+</section>
+
+<section class="slide top" data-label="The problem">
+  <h2>Three SQL files, run by hand</h2>
+  <p class="lead small">Each file creates a table from the one before. Nothing in the folder says so. It lives in your head.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-1-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-1-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-1-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-1-em)" d="M550 95 L620 95"/><path class="wire em" marker-end="url(#arr-D3-1-em)" d="M920 95 L990 95"/></svg><figure class="figure" style="left:0px;top:10px;width:170px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>You</figcaption><p class="detail">runs them in order</p></figure><div class="stage-box silver" style="left:240px;top:10px;width:310px"><h3>clean_orders.sql</h3><p>creates orders_clean</p></div><div class="stage-box silver" style="left:620px;top:10px;width:300px"><h3>order_sales.sql</h3><p>reads orders_clean</p></div><div class="stage-box silver" style="left:990px;top:10px;width:300px"><h3>city_sales.sql</h3><p>reads order_sales</p></div><div class="label rec wrong frag" data-frag="a" style="left:0px;top:270px;width:1290px"><b style="font-size:23px">A scheduler runs them alphabetically</b><span style="font-size:21px">city_sales.sql goes first: order_sales doesn’t exist yet. Error.</span></div><div class="label rec wrong frag" data-frag="b" style="left:0px;top:380px;width:1290px"><b style="font-size:23px">Order 103 is delivered after all. You rerun only the report.</b><span style="font-size:21px">No error, and Jeddah is still 33.65 SAR: it read tables built before the change.</span></div></div>
+  <div class="callout tip"><b>Takeaway.</b> With 3 files it’s annoying. With 300, it’s how wrong numbers reach a dashboard.</div>
+  <aside class="notes">The problem dbt solves, from tools/dbt.ipynb. Press once per failure. The first failure is loud: the alphabet isn't the dependency order. The second is worse, because it's silent: the report ran fine on stale tables. To get it right you had to know the chain and rerun all three, in order.</aside>
+</section>
+
+<section class="slide " data-label="Models">
+  <h2>A model is one SELECT</h2>
+  <p class="lead small">dbt writes the <code>CREATE</code> for you. You keep the only part that matters, and say what it reads.</p>
+  <div class="cols cols-2 mt-s">
+    <pre class="code" data-file="by hand · order_sales.sql"><code class="language-sql">CREATE OR REPLACE TABLE order_sales AS
+SELECT o.order_id, o.store_id, o.status,
+       i.quantity * i.unit_price
+         - i.discount AS net_amount
+FROM raw.order_items i
+JOIN orders_clean o
+  ON i.order_id = o.order_id</code></pre>
+    <pre class="code" data-file="dbt · models/order_sales.sql"><code class="language-sql">
+SELECT o.order_id, o.store_id, o.status,
+       i.quantity * i.unit_price
+         - i.discount AS net_amount
+FROM {{ source('raw', 'order_items') }} i
+JOIN {{ ref('orders_clean') }} o
+  ON i.order_id = o.order_id</code></pre>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> <b>Model:</b> one <code>.sql</code> file with one <code>SELECT</code>. <code>{{ ... }}</code> is <b>Jinja</b>: dbt fills it in before the SQL runs.</div>
+  <aside class="notes">The file name becomes the table name. Show the two side by side and let them spot the differences: no CREATE, and two names replaced. dbt is the same SQL you already know, plus a little templating. In Lab 3.2 you'll see the compiled SQL with the names filled in.</aside>
+</section>
+
+<section class="slide top" data-label="source and ref">
+  <h2>source and ref draw the arrows</h2>
+  <p class="lead small">source() points at a raw table that dbt doesn’t build. ref() points at another model. Every one is an arrow.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-2-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-2-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-2-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-2-em)" d="M280 75 L400 75"/><path class="wire em" marker-end="url(#arr-D3-2-em)" d="M280 245 L400 245"/><path class="wire em" marker-end="url(#arr-D3-2-em)" d="M680 75 C720 75 730 150 790 155"/><path class="wire em" marker-end="url(#arr-D3-2-em)" d="M680 245 C720 245 730 170 790 165"/><path class="wire em" marker-end="url(#arr-D3-2-em)" d="M1090 160 L1150 160"/></svg><div class="label rec src" style="left:0px;top:40px;width:280px"><b>raw.orders</b><span>app table</span></div><div class="label rec src" style="left:0px;top:210px;width:280px"><b>raw.order_items</b><span>app table</span></div><div class="label rec copy" style="left:405px;top:40px;width:275px"><b>stg_orders</b><span>one row per order</span></div><div class="label rec copy" style="left:405px;top:210px;width:275px"><b>stg_order_items</b><span>one row per line</span></div><div class="label rec day" style="left:795px;top:125px;width:295px"><b>fct_order_items</b><span>the star’s middle</span></div><div class="label rec day" style="left:1155px;top:125px;width:285px"><b>mart_city_revenue</b><span>Finance’s question</span></div><div class="label code" style="left:405px;top:5px;width:330px">source('raw','orders')</div><div class="label code" style="left:405px;top:175px;width:340px">source('raw','order_items')</div><div class="label code" style="left:795px;top:62px;width:340px">ref('stg_orders')<br>ref('stg_order_items')</div><div class="label code" style="left:1155px;top:88px;width:285px">ref('fct_order_items')</div><p class="annotation teal" style="left:0px;top:340px;width:1440px">You never wrote an order of execution. dbt reads every arrow, then sorts them.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Source:</b> a raw table, declared once in YAML. <b>ref:</b> “the table that model builds”. Together they’re the graph.</div>
+  <aside class="notes">This is the mental model of the session. Hard-code marts.fct_order_items instead of ref and the SQL still runs, but dbt no longer sees the arrow: on a new database it may build your mart first and fail. Sources also get a name you can test and watch.</aside>
+</section>
+
+<section class="slide top" data-label="Layers">
+  <h2>Three layers, one folder each</h2>
+  <p class="lead small">Khalid’s order through the project. Bronze, silver and gold from Day 1, in dbt’s folders.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-3-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-3-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-3-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-3-em)" d="M420 130 L500 130"/><path class="wire em" marker-end="url(#arr-D3-3-em)" d="M920 130 L1000 130"/></svg><div class="stage-box bronze" style="left:0px;top:10px;width:420px"><h3>raw</h3><p>raw.orders</p><p><code>2026-09-27 22:35</code></p><span class="tag">as the app sent it · text, UTC</span></div><div class="stage-box silver" style="left:505px;top:10px;width:415px"><h3>staging</h3><p>stg_orders</p><p><code>order_date 2026-09-28</code></p><span class="tag">one model per raw table · light cleaning · views</span></div><div class="stage-box gold" style="left:1005px;top:10px;width:435px"><h3>marts</h3><p>fct_order_items, dim_*</p><p>2 lines, 80.50 SAR</p><span class="tag">the star people query · tables</span></div><p class="annotation teal" style="left:0px;top:300px;width:1440px">The same names and keys you built by hand in Lab 3.1: fct_order_items, dim_customers, dim_products, dim_stores, dim_date.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Staging</b> cleans one source at a time. <b>Marts</b> are shaped for questions. Rules live in one place.</div>
+  <aside class="notes">A small intermediate folder exists too, for helper steps such as payments per order. The fix for the UTC problem lives once, in stg_orders, instead of in every report: forget it and Khalid's order lands on Sunday the 27th rather than Monday the 28th. The whole project has 19 models from 9 sources.</aside>
+</section>
+
+<section class="slide " data-label="Materialization">
+  <h2>View or table?</h2>
+  <div class="art-row mt-s">
+    <div class="art warehouse" style="width:170px"></div>
+    <table class="t">
+      <tr><th></th><th>View</th><th>Table</th></tr>
+      <tr><td><b>What it is</b></td><td>A saved query</td><td>A stored result</td></tr>
+      <tr><td><b>Freshness</b></td><td>Always current</td><td>As old as its last build</td></tr>
+      <tr><td><b>Reading</b></td><td>Recomputed on every read</td><td>Fast</td></tr>
+      <tr><td><b>In this project</b></td><td><code>staging/</code></td><td><code>marts/</code></td></tr>
+    </table>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> One line in <code>dbt_project.yml</code> sets it per folder. Very big tables can load only new rows (<b>incremental models</b>): later, on the job, not today.</div>
+  <aside class="notes">Materialization is the word dbt uses for how a model is stored. Staging is light and should show current raw data, so a view is enough. Marts are read all day by many people, so a stored result pays off. In the lab you confirm stg_orders is a VIEW from information_schema.</aside>
+</section>
+
+<section class="slide " data-label="Marts">
+  <h2>A mart answers one question, through ref</h2>
+  <div class="cols cols-2 mt-s">
+    <div>
+      <pre class="code" data-file="models/marts/mart_city_revenue.sql"><code class="language-sql">select s.city,
+       round(sum(f.net_amount), 2) as revenue_sar,
+       count(distinct f.order_id) as orders
+from {{ ref('fct_order_items') }} f
+join {{ ref('dim_stores') }} s using (store_id)
+where f.order_status = 'delivered'
+group by s.city</code></pre>
+    </div>
+    <div class="art-row">
+      <div class="art analyst" style="width:130px"></div>
+      <div class="bars" style="flex:1">
+        <div class="row"><span>Riyadh</span><div class="bar c-teal" style="--w:100%"></div><span class="val">3,327,724</span></div>
+        <div class="row"><span>Jeddah</span><div class="bar c-cyan" style="--w:61%"></div><span class="val">2,033,619</span></div>
+        <div class="row"><span>Dammam</span><div class="bar c-purple" style="--w:34%"></div><span class="val">1,138,837</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> 6,500,179 SAR: the definition, in one file. <b>Mart:</b> a table shaped for one team's question.</div>
+  <aside class="notes">This is what students write in Lab 3.2 task 4. It reads the star; it doesn't copy logic from anywhere. Finance's definition appears only here and in the fact, so every team gets the same 6,500,179. Bars in SAR, delivered lines only, from the lab run.</aside>
+</section>
+
+<section class="slide " data-label="dbt build">
+  <h2>dbt build runs it all, in order</h2>
+  <pre class="code s mt-s" data-file="dbt build"><code>Found 19 models, 43 data tests, 1 seed, 9 sources
+ 1 of 63 START sql table model marts.dim_date
+ 2 of 63 START sql view model staging.stg_customers
+ ...
+ 4 of 63 OK created sql view model staging.stg_order_items
+ ...
+Done. PASS=60 WARN=3 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=63</code></pre>
+  <div class="cols cols-4 mt-s">
+    <div class="stat"><div class="big">63</div><div class="lbl">steps</div></div>
+    <div class="stat"><div class="big">20</div><div class="lbl">built: 19 models + 1 seed</div></div>
+    <div class="stat"><div class="big">40</div><div class="lbl">tests passed</div></div>
+    <div class="stat"><div class="big">3</div><div class="lbl">warnings, for Session 3</div></div>
+  </div>
+  <div class="callout tip mt-s"><b>Takeaway.</b> Each model is built, then tested straight after. Test fails hard? Everything downstream waits.</div>
+  <aside class="notes">Real output from the lab, shortened. A seed is a small CSV in the project, here promo codes. Read a line aloud: its number, its type, where it went. Models run in parallel where the graph allows, so the numbers can finish out of order. The WARN lines are real data problems, and Session 3 opens with them.</aside>
+</section>
+
+<section class="slide top" data-label="Lineage">
+  <h2>Lineage: what breaks if I change this?</h2>
+  <p class="lead small">You want to rename <code>status</code> in stg_orders. dbt already knows who reads it.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-4-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-4-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-4-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-4-em)" d="M370 150 L425 150"/><path class="wire em" marker-end="url(#arr-D3-4-em)" d="M695 150 C730 150 725 80 765 80"/><path class="wire em" marker-end="url(#arr-D3-4-em)" d="M695 150 C730 150 725 225 765 225"/><path class="wire em" marker-end="url(#arr-D3-4-em)" d="M1015 80 L1095 80"/></svg><figure class="figure" style="left:0px;top:20px;width:150px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>You</figcaption><p class="detail">about to rename</p></figure><div class="label rec src" style="left:170px;top:115px;width:200px"><b>stg_orders</b><span>you change this</span></div><div class="label rec copy" style="left:430px;top:115px;width:265px"><b>fct_order_items</b><span>ref('stg_orders')</span></div><div class="label rec day" style="left:770px;top:45px;width:245px"><b>fct_orders</b><span>one row per order</span></div><div class="label rec day" style="left:770px;top:190px;width:270px"><b>mart_city_revenue</b><span>your mart</span></div><div class="label rec day" style="left:1100px;top:45px;width:340px"><b>mart_daily_city_sales</b><span>the daily dashboard</span></div><div class="label code" style="left:170px;top:310px;width:1000px">dbt ls --select stg_orders+   → these 5 models</div><p class="annotation teal" style="left:170px;top:360px;width:1270px">dim_products, dim_stores, stg_payments: untouched. You check 4 models, not 19.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Lineage:</b> what feeds what. <code>name+</code>: and all that reads it. <code>+name</code>: and all it needs.</div>
+  <aside class="notes">Lineage matters on an ordinary working day, not only in diagrams. The real result: fct_order_items, fct_orders, mart_city_revenue, mart_daily_city_sales, stg_orders. The lab draws the whole graph with V.dbt_graph; dbt docs serve shows the same graph as a website.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">You add a new model that reads <code>fct_order_items</code> through <code>ref</code>. Who decides when it runs in <code>dbt build</code>?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">You do, by numbering the file names</div>
+      <div class="opt" data-k="B" data-ok>dbt does: the ref is an arrow, so it runs after fct_order_items</div>
+      <div class="opt" data-k="C">It runs last, because it's the newest file</div>
+      <div class="opt" data-k="D">The database decides, when it finds the missing table</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> dbt reads every ref and source before running anything, then sorts the graph. Nobody keeps a run order by hand.</div>
+  </div>
+  <aside class="notes">Answer B. Follow up: and if you'd typed marts.fct_order_items? It would work on your laptop, where the table already exists, and can fail on a new database.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 3.2">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 3.2 · 25 min</div>
+      <h2>The same star in dbt</h2>
+      <p class="lead small">Tour a real project, write a staging model and a mart, build the star, and read the lineage.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_2_dbt_project.ipynb" target="_blank" rel="noopener">labs/D3_2_dbt_project.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>1 · Tour the project and list its models <span class="min">4 min</span></li>
+      <li>2 · Write stg_orders from a source <span class="min">6 min</span></li>
+      <li>3 · Run dbt build and read the log <span class="min">5 min</span></li>
+      <li>4 · Write a mart with ref and build it <span class="min">6 min</span></li>
+      <li>5 · Read the lineage <span class="min">4 min</span></li>
+      <li class="stretch">✱ Stretch · Split your mart by month</li>
+    </ul>
+  </div>
+  <aside class="notes">dbt runs in-process, with U.run_dbt wrapping the same commands you'd type in a terminal. They work on a private copy of the project and of the warehouse. Typical failure: quoting the Jinja wrongly in stg_orders. Hint: copy the source() call from stg_order_items above it. The project's macros folder isn't needed today. Expected: 172,403 fact lines; mart total 6,500,179.</aside>
+</section>
+
+<section class="slide section" data-session="S3 · Data quality">
+  <div class="kicker">Session 3</div>
+  <h1>Data quality</h1>
+  <ul class="bullets outcomes">
+    <li>Read dbt test results, and add a test that finds real problems</li>
+    <li>Decide whether a failure warns or stops the build</li>
+    <li>Check files with Pandera, and quarantine the bad rows</li>
+  </ul>
+  <div class="sess-no">03</div>
+  <aside class="notes">Most data failures don't crash anything. They produce a plausible number. Today's two sessions before this one already showed it three times: fan-out, lost sales, stale tables.</aside>
+</section>
+
+<section class="slide top" data-label="Why test">
+  <h2>Bad data doesn’t crash. It looks fine.</h2>
+  <p class="lead small">So you check it at two places: before it gets in, and after each model is built.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-5-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-5-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-5-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-5-em)" d="M170 110 L280 110"/><path class="wire em" marker-end="url(#arr-D3-5-em)" d="M540 110 L640 110"/><path class="wire em" marker-end="url(#arr-D3-5-em)" d="M820 110 L910 110"/><path class="wire em" marker-end="url(#arr-D3-5-em)" d="M1190 110 L1270 110"/></svg><figure class="figure" style="left:0px;top:10px;width:170px;margin:0"><div class="art files" aria-hidden="true"></div><figcaption>Supplier files</figcaption><p class="detail">weekly CSV</p></figure><div class="stage-box bronze frag" data-frag="a" style="left:285px;top:10px;width:255px"><h3>The door</h3><p><b>Pandera</b></p><p>rules on a DataFrame, before loading</p></div><figure class="figure" style="left:645px;top:10px;width:170px;margin:0"><div class="art warehouse" aria-hidden="true"></div><figcaption>Warehouse</figcaption></figure><div class="stage-box gold frag" data-frag="b" style="left:915px;top:10px;width:275px"><h3>After each model</h3><p><b>dbt tests</b></p><p>queries that look for bad rows</p></div><figure class="figure" style="left:1275px;top:10px;width:165px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption><p class="detail">trusts the number</p></figure><p class="annotation teal frag" data-frag="c" style="left:0px;top:310px;width:1440px">Same idea, different moment: stop a bad row at the door, and catch what got through before anyone reads it.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> A number nobody checks is a number nobody should trust. <strong>Data quality</strong> means checks that run every time.</div>
+  <aside class="notes">Press once per place. Ask: what's the difference between a supplier file with a negative price and a fact table with a duplicate key? The first belongs to someone else, so you stop it at the door with a list for the supplier. The second is your own build, so you test it in the warehouse.</aside>
+</section>
+
+<section class="slide " data-label="dbt tests">
+  <h2>A dbt test is a query that looks for bad rows</h2>
+  <div class="cols cols-2 mt-s">
+    <div>
+      <pre class="code s" data-file="models/staging/_staging.yml"><code class="language-yaml">- name: stg_orders
+  columns:
+    - name: order_id
+      data_tests: [unique, not_null]
+    - name: store_id
+      data_tests:
+        - relationships:
+            arguments:
+              to: ref('stg_stores')
+              field: store_id</code></pre>
+      <p class="small mt-s">No rows back means pass. Built in: <code>unique</code>, <code>not_null</code>, <code>accepted_values</code>, <code>relationships</code>.</p>
+    </div>
+    <table class="t small">
+      <tr><th>43 tests · 40 pass · 3 warn</th><th class="num">rows</th></tr>
+      <tr><td>Quantity not positive: bad lines</td><td class="num">142</td></tr>
+      <tr><td>Supplier cost at zero or below</td><td class="num">4</td></tr>
+      <tr><td>Payment differs from order total</td><td class="num">258</td></tr>
+    </table>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> A warning here is a real problem somebody must own. The 142 are the lines you left out of the fact in Lab 3.1.</div>
+  <aside class="notes">A test is just SQL: unique compiles to a group by with having count > 1. The three warnings come from the project's own run. Positive is a small custom test; the payment one is plain SQL in the tests folder. The 142 lines are also kept, with a reason, in quarantine.qrn_order_items.</aside>
+</section>
+
+<section class="slide top" data-label="Orphans">
+  <h2>A relationships test finds 1,040 orphans</h2>
+  <p class="lead small">Nothing tested stg_orders.customer_id. One test later, a known problem has a number.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-6-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-6-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-6-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger dashed" marker-end="url(#arr-D3-6-danger)" d="M520 75 C600 75 650 110 730 110"/><path class="wire danger dashed" marker-end="url(#arr-D3-6-danger)" d="M520 175 C600 175 650 130 730 120"/></svg><div class="label rec line lost" style="left:0px;top:40px;width:520px"><b>order 5000037</b><span>customer_id 104353</span></div><div class="label rec line lost" style="left:0px;top:140px;width:520px"><b>order 5000174</b><span>customer_id 103691</span></div><div class="label ptr red" style="left:735px;top:95px;width:30px">✕</div><div class="label tbl mono" style="left:800px;top:20px;width:300px"><div class="t-title">stg_customers</div><div class="t-row h" style="grid-template-columns:1fr"><span>customer_id</span></div><div class="t-row" style="grid-template-columns:1fr"><span>107371</span></div><div class="t-row" style="grid-template-columns:1fr"><span>107372</span></div></div><figure class="figure" style="left:1190px;top:10px;width:170px;margin:0"><div class="art quality" aria-hidden="true"></div><figcaption>1,040 rows</figcaption><p class="detail">FAIL 1040</p></figure><div class="label code" style="left:0px;top:250px;width:1100px">- name: customer_id<br>&nbsp;&nbsp;data_tests:<br>&nbsp;&nbsp;&nbsp;&nbsp;- relationships:<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;arguments: {to: ref('stg_customers'), field: customer_id}</div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Orphan:</b> a row whose reference points at nothing. A <b>relationships</b> test checks every value exists in the other table.</div>
+  <aside class="notes">Lab 3.3 task 2. Exactly the 1,040 orders from Session 1: their customers were erased on request. Each test name dbt generates is long; read it from the left. This one fails by default because the default severity is error, which sets up the next slide.</aside>
+</section>
+
+<section class="slide top" data-label="Warn or error">
+  <h2>Warn or error? See what each one does</h2>
+  <p class="lead small">Same test, same 1,040 rows. Only the severity changes.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-7-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-7-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-7-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire danger" marker-end="url(#arr-D3-7-danger)" d="M350 95 L410 95"/><path class="wire danger dashed" marker-end="url(#arr-D3-7-danger)" d="M660 95 L720 95"/><path class="wire danger dashed" marker-end="url(#arr-D3-7-danger)" d="M970 95 L1030 95"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D3-7-em)" d="M350 275 L410 275"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D3-7-em)" d="M660 275 L720 275"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D3-7-em)" d="M970 275 L1030 275"/></svg><div class="label hand red" style="left:0px;top:25px;width:340px">severity: error</div><div class="label rec wrong" style="left:0px;top:65px;width:350px"><b>stg_orders test</b><span>FAIL 1040</span></div><div class="label rec line lost" style="left:415px;top:65px;width:245px"><b>fct_order_items</b><span>SKIP</span></div><div class="label rec line lost" style="left:725px;top:65px;width:245px"><b>fct_orders</b><span>SKIP</span></div><div class="label rec line lost" style="left:1035px;top:65px;width:305px"><b>mart_daily_city_sales</b><span>SKIP</span></div><div class="label hand teal frag" data-frag="b" style="left:0px;top:205px;width:340px">severity: warn</div><div class="label rec chg frag" data-frag="b" style="left:0px;top:245px;width:350px"><b>stg_orders test</b><span>WARN 1040</span></div><div class="label rec copy frag" data-frag="b" style="left:415px;top:245px;width:245px"><b>fct_order_items</b><span>OK</span></div><div class="label rec copy frag" data-frag="b" style="left:725px;top:245px;width:245px"><b>fct_orders</b><span>OK</span></div><div class="label rec copy frag" data-frag="b" style="left:1035px;top:245px;width:305px"><b>mart_daily_city_sales</b><span>OK</span></div><p class="annotation teal frag" data-frag="b" style="left:0px;top:385px;width:1440px">What does a wrong number cost, next to a late one? And is this failure expected?</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Error</b> stops what’s downstream: stale, not wrong. <b>Warn</b> records it and goes on, and needs an owner, or it turns into wallpaper.</div>
+  <aside class="notes">From the lab: with error, 3 models and 12 tests skipped; with warn, every model built. Here warn is right: the orphans are expected, and the fact maps them to -1. But the test on fct_order_items.customer_id to dim_customers stays an error, because an orphan there means a bug in the model. Error when wrong costs more than late: invoices, a broken grain. Warn for known, tolerated problems someone is following up. Skipped models keep what they held from their last build.</aside>
+</section>
+
+<section class="slide top" data-label="Pandera">
+  <h2>Supplier files drift, week after week</h2>
+  <p class="lead small">Four CSV files, 640 rows. Same supplier feed, and a new surprise each week.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-8-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-8-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-8-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-8-em)" d="M555 80 L640 150"/><path class="wire em" marker-end="url(#arr-D3-8-em)" d="M555 175 L640 165"/><path class="wire em" marker-end="url(#arr-D3-8-em)" d="M555 270 L640 185"/><path class="wire em" marker-end="url(#arr-D3-8-em)" d="M555 365 L640 200"/><path class="wire em" marker-end="url(#arr-D3-8-em)" d="M1010 170 L1080 170"/></svg><figure class="figure" style="left:0px;top:110px;width:170px;margin:0"><div class="art files" aria-hidden="true"></div><figcaption>Purchasing</figcaption><p class="detail">gets the files</p></figure><div class="label rec src" style="left:200px;top:45px;width:355px"><b>prices_2026-W36.csv</b><span>unit_cost 7.71</span></div><div class="label rec src" style="left:200px;top:140px;width:355px"><b>prices_2026-W37.csv</b><span>as expected</span></div><div class="label rec chg" style="left:200px;top:235px;width:355px"><b>prices_2026-W38.csv</b><span>9,49 and ٩٫٤٩</span></div><div class="label rec wrong" style="left:200px;top:330px;width:355px"><b>prices_2026-W39.csv</b><span>cost_sar · −5.5 · QF-NEW-9292</span></div><div class="stage-box bronze" style="left:645px;top:50px;width:365px"><h3>Parse</h3><p>columns, commas, digits: a parser fixes the <b>format</b></p></div><div class="stage-box gold" style="left:1085px;top:50px;width:355px"><h3>Validate</h3><p>Pandera checks the <b>values</b>: 7 rows fail</p></div><p class="annotation teal" style="left:645px;top:330px;width:795px">Week 38 is messy but correct, so it passes.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> Parse what’s only badly written. Reject what’s actually wrong. Those are different jobs.</div>
+  <aside class="notes">Week 38 uses decimal commas and Arabic digits, and all 160 of its rows are fine once parsed. Week 39 renames a column to cost_sar, and has real errors: 4 costs at zero or below, 3 SKUs not in our catalogue. If you rejected on the format you'd lose a good week; if you only parsed you'd load negative prices. The lab gives you the parser, since the parsing skill was yesterday's.</aside>
+</section>
+
+<section class="slide " data-label="Pandera">
+  <h2>Pandera: the rules as a Python class</h2>
+  <div class="cols cols-2 mt-s">
+    <pre class="code s" data-file="the door"><code class="language-python">class SupplierPrice(pa.DataFrameModel):
+    supplier_id: str = pa.Field(str_startswith="SUP-")
+    sku: str = pa.Field(isin=known_skus)
+    unit_cost_sar: float = pa.Field(gt=0, nullable=False)
+    currency: str = pa.Field(isin=["SAR"])
+    min_order_qty: int = pa.Field(isin=[6, 12, 24, 48])
+
+SupplierPrice.validate(prices, lazy=True)</code></pre>
+    <table class="t small">
+      <tr><th>column</th><th>failure</th><th>file</th></tr>
+      <tr><td><code>unit_cost_sar</code></td><td>−1.0, 0.0, −5.5, −1.0</td><td>W39</td></tr>
+      <tr><td><code>sku</code></td><td>QF-NEW-9292, QF-NEW-9435, QF-NEW-9413</td><td>W39</td></tr>
+    </table>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> <code>lazy=True</code> reports <b>every</b> failure, not just the first: 7 of 640 rows, ready to send to the supplier.</div>
+  <aside class="notes">Pandera is a library that checks DataFrames against declared rules, here with Polars from Day 2. Each field is one rule. Without lazy=True you'd fix one failure, rerun, find the next. Lab 3.3 task 4 asks for the sku and unit_cost_sar rules. Expect 'why not Great Expectations or Soda?': same job, more setup.</aside>
+</section>
+
+<section class="slide top" data-label="Quarantine">
+  <h2>Quarantine: good rows on, bad rows aside</h2>
+  <p class="lead small">Rejecting the file leaves Purchasing with nothing. Loading it lets bad prices in.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-9-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-9-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-9-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-9-em)" d="M340 160 C420 160 440 90 520 90"/><path class="wire danger" marker-end="url(#arr-D3-9-danger)" d="M340 180 C420 180 440 280 520 280"/><path class="wire em" marker-end="url(#arr-D3-9-em)" d="M880 90 L1000 90"/></svg><div class="label rec src" style="left:0px;top:130px;width:340px"><b>640 rows</b><span>four weekly files, validated</span></div><div class="label rec copy frag" data-frag="a" style="left:525px;top:50px;width:355px"><b>633 clean rows</b><span>supplier_prices_clean.parquet</span></div><figure class="figure frag" data-frag="a" style="left:1005px;top:0px;width:150px;margin:0"><div class="art warehouse" aria-hidden="true"></div><figcaption>Warehouse</figcaption></figure><div class="label rec wrong frag" data-frag="b" style="left:525px;top:240px;width:620px"><b>7 in quarantine</b><span>supplier_prices_quarantine.csv, each with its reason</span></div><figure class="figure frag" data-frag="c" style="left:1230px;top:180px;width:170px;margin:0"><div class="art steward" aria-hidden="true"></div><figcaption>An owner</figcaption><p class="detail">tells the supplier</p></figure></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Quarantine:</b> the middle way. If nobody owns the list, it’s just a slow way to lose data.</div>
+  <aside class="notes">From the lab: 633 clean, 7 quarantined, all in week 39. Ask: who reads the quarantine file? Name a person for the capstone. dbt's quarantine.qrn_order_items is the same idea inside the warehouse, for the 142 bad lines. The count of quarantined rows is itself worth watching: a jump means a source changed.</aside>
+</section>
+
+<section class="slide top" data-label="Contracts exist">
+  <h2>One more idea: contracts exist</h2>
+  <p class="lead small">A written promise between the team that produces data and the team that uses it.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D4_2_contracts_observability-4-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-4-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-4-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D4_2_contracts_observability-4-em)" data-id="w-c1" d="M195 130 L275 130"/><path class="wire " marker-end="url(#arr-D4_2_contracts_observability-4-normal)" data-id="w-c2" d="M515 130 L565 130"/><path class="wire " marker-end="url(#arr-D4_2_contracts_observability-4-normal)" data-id="w-c3" d="M805 130 L865 130"/><path class="wire em" marker-end="url(#arr-D4_2_contracts_observability-4-em)" data-id="w-c4" d="M1105 130 L1215 130"/></svg><figure class="figure" data-id="f-pay" style="left:0px;top:40px;width:190px;margin:0"><div class="art payment" aria-hidden="true"></div><figcaption>Payment provider</figcaption><p class="detail">another company</p></figure><div class="stage-box bronze" data-id="b-raw" style="left:280px;top:60px;width:230px"><h3>raw.payments</h3><p>the feed, landed</p></div><div class="stage-box silver" data-id="b-stg" style="left:570px;top:60px;width:230px"><h3>staging</h3><p>our models</p></div><div class="stage-box gold" data-id="b-fct" style="left:870px;top:60px;width:230px"><h3>fct_orders</h3><p>published mart</p></div><figure class="figure" data-id="f-fin" style="left:1230px;top:40px;width:190px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Finance</figcaption></figure><div class="label ptr sla" data-id="c-in" style="left:190px;top:92px;width:90px">contract</div><div class="label ptr" data-id="c-mid" style="left:570px;top:290px;width:230px">dbt tests</div><div class="label ptr sla" data-id="c-out" style="left:1110px;top:92px;width:100px">contract</div><p class="annotation teal" style="left:0px;top:380px;width:600px">The provider promises the feed to us.</p><p class="annotation teal" style="left:840px;top:380px;width:600px">We promise the mart to Finance.</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Data contract:</b> tests decide what you accept; a contract says what was promised, across a team boundary. You’ll meet them on the job.</div>
+  <aside class="notes">One slide only: you won't write one in this course. Inside one team, dbt tests are enough. A contract earns its keep where ownership changes: a provider's feed coming in, a mart going out to Finance. A standard format exists, ODCS. Today's Pandera schema for the supplier is already most of one, minus the signature.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">Week 39's supplier file has 7 bad rows out of 160. The other 153 are fine. What do you do?</p>
+    <div class="opts">
+      <div class="opt" data-k="A" data-ok>Load the 153, set the 7 aside with reasons, and send the supplier the list</div>
+      <div class="opt" data-k="B">Reject the whole file until the supplier sends a clean one</div>
+      <div class="opt" data-k="C">Load all 160, because dbt tests will catch the bad ones later</div>
+      <div class="opt" data-k="D">Fix the 7 values by hand so the totals look right</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Quarantine keeps the good data flowing and leaves the decision about the bad rows with the people who know. Fixing by hand invents data, and loading first lets bad prices reach reports.</div>
+  </div>
+  <aside class="notes">Answer A. B is defensible for a contract-critical feed, and worth discussing, but Purchasing would then have no prices at all this week.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 3.3">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 3.3 · 25 min</div>
+      <h2>Tests and quarantine</h2>
+      <p class="lead small">Read test results, add a test that catches real orphans, choose its severity, then guard the supplier files.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_3_data_quality.ipynb" target="_blank" rel="noopener">labs/D3_3_data_quality.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>1 · Run the tests and read the warnings <span class="min">5 min</span></li>
+      <li>2 · Add a relationships test that finds orphans <span class="min">6 min</span></li>
+      <li>3 · Choose warn or error <span class="min">5 min</span></li>
+      <li>4 · Validate the supplier files with Pandera <span class="min">6 min</span></li>
+      <li>5 · Quarantine the bad rows <span class="min">3 min</span></li>
+      <li class="stretch">✱ Stretch · Store the failing rows in the warehouse</li>
+    </ul>
+  </div>
+  <aside class="notes">A private copy of the project again. Typical failure: YAML indentation in task 2. It must line up with the name: store_id printed above; the safety net carries on if it breaks. Task 3 runs a build twice, so give it a moment. Expected: 1,040 orphans; with error 15 steps skipped; 633 clean and 7 quarantined.</aside>
+</section>
+
+<section class="slide section" data-session="S4 · Orchestration with Dagster">
+  <div class="kicker">Session 4</div>
+  <h1>Orchestration with Dagster</h1>
+  <ul class="bullets outcomes">
+    <li>Say why a nightly script isn't enough</li>
+    <li>Model a pipeline as assets, with dbt in the same graph</li>
+    <li>Schedule it, block bad data, and watch the volume</li>
+  </ul>
+  <div class="sess-no">04</div>
+  <aside class="notes">So far you ran each step by hand. An orchestrator does it for you: on a schedule, in order, with a record of every run. Dagster is one such tool; Airflow is the most widely deployed. The ideas transfer.</aside>
+</section>
+
+<section class="slide top" data-label="The problem">
+  <h2>A nightly script breaks the usual ways</h2>
+  <p class="lead small">Load, total per store, total per city: three functions that cron, a clock on the server, starts every night.</p>
+  <div class="board"><figure class="figure" style="left:0px;top:30px;width:170px;margin:0"><div class="art engineer" aria-hidden="true"></div><figcaption>On call</figcaption><p class="detail">Monday: all fine</p></figure><div class="label rec wrong frag" data-frag="a" style="left:210px;top:10px;width:1230px"><b style="font-size:23px">Tuesday: a timeout, then a morning rerun</b><span style="font-size:21px">The file loaded twice. Jeddah shows 250.50, double the truth. No error.</span></div><div class="label rec wrong frag" data-frag="b" style="left:210px;top:145px;width:1230px"><b style="font-size:23px">Wednesday: a refund written as an order of −12.00</b><span style="font-size:21px">It goes straight into the totals: Riyadh 43.00, not 55.00. No step looked.</span></div><div class="label rec wrong frag" data-frag="c" style="left:210px;top:280px;width:1230px"><b style="font-size:23px">“When was this report last built? From which file?”</b><span style="font-size:21px">The script doesn’t know. The answers live in a log and in people’s heads.</span></div></div>
+  <div class="callout tip"><b>Takeaway.</b> A script knows the steps. It doesn’t know what they <em>produce</em>, whether it’s right, or when it was last built.</div>
+  <aside class="notes">From tools/dagster.ipynb, on toy data small enough to check by eye. Press once per day. Each failure is one we've already named today: rerunning without idempotency, no check at the door, no lineage. Next: what would fix all three.</aside>
+</section>
+
+<section class="slide top" data-label="Where it sits">
+  <h2>An orchestrator coordinates, it doesn’t carry</h2>
+  <p class="lead small">The whole platform. Dagster decides when each job runs and records what it produced.</p>
+  <div class="board s" style="height:560px"><svg class="wires" style="height:510px" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-00_story-20-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-00_story-20-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-00_story-20-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="enclosure teal" data-id="lake-box" d="M406 58 L1049 60 Q1057 61 1055 71 L1053 339 Q1054 350 1043 348 L400 347 Q393 348 395 335 L396 67 Q395 57 406 58Z"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-db" d="M315 176 L415 176"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-files" d="M245 350 C315 350 355 250 415 250"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-transform" d="M598 230 L635 230"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-serve" d="M818 230 L855 230"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-analyst" d="M1060 175 L1180 175"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-scientist" d="M1060 300 C1110 300 1145 365 1180 365"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-engine-1" d="M616 398 L616 242"/><path class="wire em" marker-end="url(#arr-00_story-20-em)" data-id="w-engine-2" d="M836 398 L836 242"/><path class="enclosure frame" data-id="dagster-frame" d="M383 36 L1072 38 Q1080 39 1078 49 L1076 501 Q1077 512 1066 510 L377 509 Q370 510 372 497 L373 45 Q372 35 383 36Z"/></svg><div class="label hand muted" data-id="sources-title" style="left:22px;top:0px;width:300px">SOURCE SYSTEMS</div><figure class="figure" data-id="app" style="left:10px;top:60px;width:125px;margin:0"><div class="art app" aria-hidden="true"></div><figcaption>Qafila app</figcaption></figure><figure class="figure" data-id="source-db" style="left:160px;top:73px;width:155px;margin:0"><div class="art db" aria-hidden="true"></div><figcaption>Orders + payments</figcaption></figure><figure class="figure" data-id="source-files" style="left:40px;top:270px;width:170px;margin:0"><div class="art files" aria-hidden="true"></div><figcaption>Events + reviews</figcaption></figure><div class="label hand muted" data-id="users-title" style="left:1180px;top:0px;width:250px">CONSUMERS</div><figure class="figure" data-id="analyst" style="left:1200px;top:55px;width:165px;margin:0"><div class="art analyst" aria-hidden="true"></div><figcaption>Analysts</figcaption><p class="detail">Reports + BI</p></figure><figure class="figure" data-id="scientist" style="left:1200px;top:305px;width:150px;margin:0"><div class="art scientist" aria-hidden="true"></div><figcaption>Data scientists</figcaption><p class="detail">Explore + ML</p></figure><div class="label hand teal" data-id="lake-title" style="left:425px;top:76px;width:260px">DATA LAKEHOUSE</div><div class="label muted" data-id="iceberg" style="left:715px;top:84px;width:180px">Iceberg tables</div><figure class="figure" data-id="catalog" style="left:905px;top:70px;width:58px;margin:0"><div class="art catalog" aria-hidden="true"></div></figure><figure class="figure" data-id="lake" style="left:975px;top:70px;width:58px;margin:0"><div class="art house" aria-hidden="true"></div></figure><div class="stage-box bronze" data-id="record-1" style="left:420px;top:130px;width:175px"><h3>Bronze</h3><p>Source history</p><span class="tag">Retain</span></div><div class="stage-box silver" data-id="record-2" style="left:640px;top:130px;width:175px"><h3>Silver</h3><p>Validated records</p><span class="tag">Clean</span></div><div class="stage-box gold" data-id="record-3" style="left:860px;top:130px;width:175px"><h3>Gold</h3><p>Business datasets</p><span class="tag">Serve</span></div><div class="label tool-label inline" data-id="engines" style="left:540px;top:400px;width:420px"><strong>Engines</strong><span>DuckDB · Polars · Spark</span></div><div class="label tool-label inline" data-id="dagster" style="left:420px;top:458px;width:620px"><strong>Dagster</strong><span>schedules, retries and tracks every job</span></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Orchestrator:</b> starts each job when its inputs are ready. No data flows through the dashed frame.</div>
+  <aside class="notes">The dashed frame wraps storage and engines. Nothing moves through Dagster: it starts each job when its inputs are ready, retries failures and records which tables are current. Your dbt project and your loaders still do the work. Iceberg, on the board, is tomorrow's first session.</aside>
+</section>
+
+<section class="slide top" data-label="Assets">
+  <h2>Assets: the tables you want, not the steps</h2>
+  <p class="lead small">Say what each table is built from. Dagster works out what to run, in what order.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-10-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-10-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-10-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-10-em)" d="M370 110 L460 110"/><path class="wire em" marker-end="url(#arr-D3-10-em)" d="M790 110 L880 110"/></svg><div class="label rec src" style="left:0px;top:75px;width:370px"><b>raw/delivery_events</b><span>built by a Python function</span></div><div class="label rec src" style="left:0px;top:245px;width:520px"><b>raw/reviews</b><span>another asset, with nothing downstream yet</span></div><div class="label rec copy" style="left:465px;top:75px;width:325px"><b>ops/delivery_events</b><span>deps: raw/delivery_events</span></div><div class="label rec day" style="left:885px;top:75px;width:420px"><b>ops/delivered_per_store</b><span>deps: ops/delivery_events</span></div><figure class="figure" style="left:1200px;top:190px;width:160px;margin:0"><div class="art monitoring" aria-hidden="true"></div><figcaption>Every run</figcaption><p class="detail">recorded</p></figure><p class="annotation teal" style="left:0px;top:390px;width:1190px">Task-based tools ask: which step next? Asset-based ones ask: is this table up to date?</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Asset:</b> a table or file you want to exist, plus the function that builds it. <b>Materialize:</b> build it now.</div>
+  <aside class="notes">The word software-defined asset appears in Dagster's documents; it means this. Because each asset names what it's built from, the graph draws itself, and you can ask for one table and everything downstream of it. Everything in the lab runs in the notebook with dg.materialize, no server needed. dagster dev gives you the web interface; the capstone kit has one.</aside>
+</section>
+
+<section class="slide " data-label="Assets">
+  <h2>An asset is a decorated function</h2>
+  <pre class="code mt-s" data-file="Lab 3.4"><code class="language-python">@dg.asset(key=["ops", "delivered_per_store"], deps=[ops_delivery_events])
+def ops_delivered_per_store():
+    sql("""CREATE OR REPLACE TABLE ops.delivered_per_store AS
+           SELECT store_id, count(*) AS delivered
+           FROM ops.delivery_events
+           WHERE event_type = 'delivered' GROUP BY ALL""")
+
+result = dg.materialize([ops_delivery_events, ops_delivered_per_store])</code></pre>
+  <div class="callout tip mt"><b>Takeaway.</b> A <b>decorator</b> (<code>@</code>) labels the function. <code>key</code> names the table, <code>deps</code> names its parents: that's the whole graph.</div>
+  <aside class="notes">Read from the top. Python basics are enough: a decorator is a function that wraps your function, and here it just registers it. The body is plain SQL through a small helper. Nothing runs until materialize.</aside>
+</section>
+
+<section class="slide top" data-label="dbt in the graph">
+  <h2>dbt joins the same graph</h2>
+  <p class="lead small">Every dbt model becomes an asset, every test a check. A source links to the asset of the same name.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-11-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-11-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-11-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-11-em)" d="M305 95 L345 95"/><path class="wire em" marker-end="url(#arr-D3-11-em)" d="M640 95 L680 95"/><path class="wire em" marker-end="url(#arr-D3-11-em)" d="M990 95 L1030 95"/><path class="wire em" marker-end="url(#arr-D3-11-em)" d="M1150 132 L1150 178"/></svg><div class="label rec src" style="left:0px;top:60px;width:305px"><b>raw/delivery_events</b><span>your Python asset</span></div><div class="label rec copy" style="left:350px;top:60px;width:290px"><b>stg_delivery_events</b><span>dbt view</span></div><div class="label rec copy" style="left:685px;top:60px;width:305px"><b>int_delivery_timeline</b><span>dbt view</span></div><div class="label rec day" style="left:1035px;top:60px;width:240px"><b>fct_orders</b><span>dbt table</span></div><div class="label rec day" style="left:1035px;top:180px;width:340px"><b>mart_daily_city_sales</b><span>dbt table</span></div><div class="label rec line lost" style="left:0px;top:180px;width:305px"><b>raw/reviews</b><span>not downstream</span></div><div class="label rec line lost" style="left:350px;top:180px;width:305px"><b>marts/dim_products</b><span>not downstream</span></div><div class="label answer" style="left:0px;top:300px;width:700px"><b>20 assets, 43 checks</b>from the dbt project, no Dagster code per model</div><div class="label answer" style="left:760px;top:300px;width:680px"><b>5 rebuilt, 9 tests run</b>new events: only what reads them</div></div>
+  <div class="callout tip"><b>Takeaway.</b> One graph, from file to mart. Ask for fresh events, and the orchestrator works out the steps.</div>
+  <aside class="notes">Lab 3.4 task 2: select raw/delivery_events and everything downstream. The run rebuilt 5 assets and ran 9 dbt tests as checks; dim_products and raw/reviews were left alone. A warn-severity dbt test becomes a non-blocking check, and an error-severity one blocks. The one that didn't pass here is the payments test, which warns.</aside>
+</section>
+
+<section class="slide " data-label="Schedule">
+  <h2>A schedule starts it every night</h2>
+  <div class="art-row mt-s">
+    <div class="art operations" style="width:170px"></div>
+    <div style="flex:1">
+      <pre class="code s" data-file="Lab 3.4"><code class="language-python">nightly = dg.ScheduleDefinition(name="nightly", target=dg.AssetSelection.all(),
+    cron_schedule="30 1 * * *", execution_timezone="Asia/Riyadh")</code></pre>
+      <table class="t small mt-s">
+        <tr><th>minute</th><th>hour</th><th>day of month</th><th>month</th><th>day of week</th></tr>
+        <tr><td><code>30</code></td><td><code>1</code></td><td><code>*</code> every</td><td><code>*</code> every</td><td><code>*</code> every</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="callout tip mt"><b>Takeaway.</b> <b>Cron:</b> five fields that describe a clock. Every Monday at 06:00 would be <code>0 6 * * 1</code>. Always set the time zone.</div>
+  <aside class="notes">In production a small service, the Dagster daemon, watches the clock and starts runs. The lab tests the rule with a fake tick, one run requested, rather than waiting for the night. Common failure: a schedule with no time zone runs in UTC, three hours off Riyadh. Dagster can also start runs when something happens, such as a file landing: you'll meet that later.</aside>
+</section>
+
+<section class="slide top" data-label="Blocking check">
+  <h2>A blocking check stops bad data spreading</h2>
+  <p class="lead small">Phones retry, so the raw events hold duplicates. An asset check looks right after the build, and can stop what follows.</p>
+  <div class="board"><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D3-12-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D3-12-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D3-12-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire em" marker-end="url(#arr-D3-12-em)" d="M310 100 L360 100"/><path class="wire danger" marker-end="url(#arr-D3-12-danger)" d="M670 100 L730 100"/><path class="wire danger dashed" marker-end="url(#arr-D3-12-danger)" d="M1000 100 L1060 100"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D3-12-em)" d="M670 290 L730 290"/><path class="wire em frag" data-frag="b" marker-end="url(#arr-D3-12-em)" d="M1000 290 L1060 290"/></svg><div class="label rec src" style="left:0px;top:65px;width:310px"><b>raw/delivery_events</b><span>22,518 rows</span></div><div class="label rec copy" style="left:365px;top:65px;width:305px"><b>ops/delivery_events</b><span>copies them straight through</span></div><div class="label rec wrong" style="left:735px;top:65px;width:265px"><b>no_duplicate_events</b><span>✕ 312 duplicates</span></div><div class="label rec line lost" style="left:1065px;top:65px;width:375px"><b>ops/delivered_per_store</b><span>skipped: keeps yesterday</span></div><div class="label hand teal frag" data-frag="b" style="left:0px;top:190px;width:700px">Fix the loader: one row per event_id</div><div class="label rec copy frag" data-frag="b" style="left:365px;top:255px;width:305px"><b>ops/delivery_events</b><span>QUALIFY row_number() … = 1</span></div><div class="label rec line frag" data-frag="b" style="left:735px;top:255px;width:265px"><b>no_duplicate_events</b><span>✓ 0 duplicates</span></div><div class="label rec day frag" data-frag="b" style="left:1065px;top:255px;width:375px"><b>ops/delivered_per_store</b><span>built: 5,257 delivered</span></div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Block</b> when a wrong number costs more than a late one. <b>Warn</b> when a person should look but the data is still useful.</div>
+  <aside class="notes">Lab 3.4 task 4. A blocked run leaves the board showing yesterday's number instead of a wrong one. But blocking stops spreading only from now on; it doesn't undo what an earlier run built. Ask: the check is blocking, the data is wrong, the dashboard is due in the morning. Who gets told, and what do they see? That's the owner question again.</aside>
+</section>
+
+<section class="slide top" data-label="Volume">
+  <h2>Orders per day: where is the incident?</h2>
+  <p class="lead small">Every day of August and September. We simulate an incident in the lab. Thursdays and Fridays are the weekend peaks.</p>
+  <div class="board"><div class="label vcol " data-id="d0" style="left:10px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d1" style="left:26.3px;top:231px;width:12px"><span style="height:149px"></span></div><div class="label vcol " data-id="d2" style="left:42.6px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d3" style="left:58.9px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d4" style="left:75.2px;top:229px;width:12px"><span style="height:151px"></span></div><div class="label vcol peak" data-id="d5" style="left:91.5px;top:189px;width:12px"><span style="height:191px"></span></div><div class="label vcol peak" data-id="d6" style="left:107.8px;top:192px;width:12px"><span style="height:188px"></span></div><div class="label vcol " data-id="d7" style="left:124.1px;top:226px;width:12px"><span style="height:154px"></span></div><div class="label vcol " data-id="d8" style="left:140.4px;top:225px;width:12px"><span style="height:155px"></span></div><div class="label vcol " data-id="d9" style="left:156.7px;top:228px;width:12px"><span style="height:152px"></span></div><div class="label vcol " data-id="d10" style="left:173px;top:226px;width:12px"><span style="height:154px"></span></div><div class="label vcol " data-id="d11" style="left:189.3px;top:223px;width:12px"><span style="height:157px"></span></div><div class="label vcol peak" data-id="d12" style="left:205.6px;top:184px;width:12px"><span style="height:196px"></span></div><div class="label vcol peak" data-id="d13" style="left:221.9px;top:185px;width:12px"><span style="height:195px"></span></div><div class="label vcol " data-id="d14" style="left:238.2px;top:224px;width:12px"><span style="height:156px"></span></div><div class="label vcol " data-id="d15" style="left:254.5px;top:222px;width:12px"><span style="height:158px"></span></div><div class="label vcol " data-id="d16" style="left:270.8px;top:221px;width:12px"><span style="height:159px"></span></div><div class="label vcol " data-id="d17" style="left:287.1px;top:220px;width:12px"><span style="height:160px"></span></div><div class="label vcol " data-id="d18" style="left:303.4px;top:222px;width:12px"><span style="height:158px"></span></div><div class="label vcol peak" data-id="d19" style="left:319.7px;top:179px;width:12px"><span style="height:201px"></span></div><div class="label vcol peak" data-id="d20" style="left:336px;top:181px;width:12px"><span style="height:199px"></span></div><div class="label vcol " data-id="d21" style="left:352.3px;top:218px;width:12px"><span style="height:162px"></span></div><div class="label vcol " data-id="d22" style="left:368.6px;top:218px;width:12px"><span style="height:162px"></span></div><div class="label vcol " data-id="d23" style="left:384.9px;top:219px;width:12px"><span style="height:161px"></span></div><div class="label vcol " data-id="d24" style="left:401.2px;top:217px;width:12px"><span style="height:163px"></span></div><div class="label vcol " data-id="d25" style="left:417.5px;top:215px;width:12px"><span style="height:165px"></span></div><div class="label vcol peak" data-id="d26" style="left:433.8px;top:176px;width:12px"><span style="height:204px"></span></div><div class="label vcol peak" data-id="d27" style="left:450.1px;top:173px;width:12px"><span style="height:207px"></span></div><div class="label vcol " data-id="d28" style="left:466.4px;top:216px;width:12px"><span style="height:164px"></span></div><div class="label vcol " data-id="d29" style="left:482.7px;top:215px;width:12px"><span style="height:165px"></span></div><div class="label vcol " data-id="d30" style="left:499px;top:214px;width:12px"><span style="height:166px"></span></div><div class="label vcol " data-id="d31" style="left:515.3px;top:212px;width:12px"><span style="height:168px"></span></div><div class="label vcol " data-id="d32" style="left:531.6px;top:212px;width:12px"><span style="height:168px"></span></div><div class="label vcol peak" data-id="d33" style="left:547.9px;top:169px;width:12px"><span style="height:211px"></span></div><div class="label vcol peak" data-id="d34" style="left:564.2px;top:170px;width:12px"><span style="height:210px"></span></div><div class="label vcol " data-id="d35" style="left:580.5px;top:211px;width:12px"><span style="height:169px"></span></div><div class="label vcol " data-id="d36" style="left:596.8px;top:209px;width:12px"><span style="height:171px"></span></div><div class="label vcol " data-id="d37" style="left:613.1px;top:210px;width:12px"><span style="height:170px"></span></div><div class="label vcol " data-id="d38" style="left:629.4px;top:208px;width:12px"><span style="height:172px"></span></div><div class="label vcol " data-id="d39" style="left:645.7px;top:210px;width:12px"><span style="height:170px"></span></div><div class="label vcol peak" data-id="d40" style="left:662px;top:162px;width:12px"><span style="height:218px"></span></div><div class="label vcol peak" data-id="d41" style="left:678.3px;top:166px;width:12px"><span style="height:214px"></span></div><div class="label vcol " data-id="d42" style="left:694.6px;top:204px;width:12px"><span style="height:176px"></span></div><div class="label vcol " data-id="d43" style="left:710.9px;top:207px;width:12px"><span style="height:173px"></span></div><div class="label vcol " data-id="d44" style="left:727.2px;top:205px;width:12px"><span style="height:175px"></span></div><div class="label vcol " data-id="d45" style="left:743.5px;top:206px;width:12px"><span style="height:174px"></span></div><div class="label vcol " data-id="d46" style="left:759.8px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol peak" data-id="d47" style="left:776.1px;top:160px;width:12px"><span style="height:220px"></span></div><div class="label vcol peak" data-id="d48" style="left:792.4px;top:156px;width:12px"><span style="height:224px"></span></div><div class="label vcol " data-id="d49" style="left:808.7px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol " data-id="d50" style="left:825px;top:201px;width:12px"><span style="height:179px"></span></div><div class="label vcol " data-id="d51" style="left:841.3px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol " data-id="d52" style="left:857.6px;top:198px;width:12px"><span style="height:182px"></span></div><div class="label vcol " data-id="d53" style="left:873.9px;top:38px;width:12px"><span style="height:342px"></span></div><div class="label vcol peak" data-id="d54" style="left:890.2px;top:155px;width:12px"><span style="height:225px"></span></div><div class="label vcol peak" data-id="d55" style="left:906.5px;top:152px;width:12px"><span style="height:228px"></span></div><div class="label vcol " data-id="d56" style="left:922.8px;top:200px;width:12px"><span style="height:180px"></span></div><div class="label vcol " data-id="d57" style="left:939.1px;top:197px;width:12px"><span style="height:183px"></span></div><div class="label vcol " data-id="d58" style="left:955.4px;top:197px;width:12px"><span style="height:183px"></span></div><div class="label vcol " data-id="d59" style="left:971.7px;top:306px;width:12px"><span style="height:74px"></span></div><div class="label vcol " data-id="d60" style="left:988px;top:198px;width:12px"><span style="height:182px"></span></div><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D4_2_contracts_observability-6-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-6-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-6-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire axis" marker-end="url(#arr-D4_2_contracts_observability-6-normal)" data-id="c-axis" d="M0 382 L1010 382"/></svg><div class="label tick" data-id="ct0" style="left:-30px;top:392px;width:100px">1 Aug</div><div class="label tick" data-id="ct14" style="left:198.2px;top:392px;width:100px">15 Aug</div><div class="label tick" data-id="ct31" style="left:475.29999999999995px;top:392px;width:100px">1 Sep</div><div class="label tick" data-id="ct45" style="left:703.5px;top:392px;width:100px">15 Sep</div><div class="label tick" data-id="ct59" style="left:931.7px;top:392px;width:100px">29 Sep</div><div class="label reason" data-id="legend" style="left:1080px;top:20px;width:360px"><b style="color:#ac713b">amber</b> Thursdays and Fridays<br><b>the spike</b> National Day, 23 September</div></div>
+  <div class="callout tip"><b>Takeaway.</b> <b>Volume:</b> did roughly the usual number of rows arrive? <b>Freshness</b> is its twin: is the newest row older than it should be?</div>
+  <aside class="notes">Real daily order counts (UTC days) with the lab's simulated incident: on Tuesday 29 September a load job kept only 308 of the day's 765 orders and still reported success. Amber bars are Thursdays and Fridays, about 25% busier. The spike on Wednesday 23 September is Saudi National Day, 1,423 orders. Let the room find the incident first, then ask how a program would find it. Tests catch what you can describe in advance; monitors catch what you can't.</aside>
+</section>
+
+<section class="slide top" data-label="Volume">
+  <h2>Compare each day with the same weekday</h2>
+  <p class="lead small">Usual = the median of the same weekday over the previous 4 weeks. Alert at 30% off.</p>
+  <div class="board"><div class="label vcol " data-id="d0" style="left:10px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d1" style="left:26.3px;top:231px;width:12px"><span style="height:149px"></span></div><div class="label vcol " data-id="d2" style="left:42.6px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d3" style="left:58.9px;top:230px;width:12px"><span style="height:150px"></span></div><div class="label vcol " data-id="d4" style="left:75.2px;top:229px;width:12px"><span style="height:151px"></span></div><div class="label vcol peak" data-id="d5" style="left:91.5px;top:189px;width:12px"><span style="height:191px"></span></div><div class="label vcol peak" data-id="d6" style="left:107.8px;top:192px;width:12px"><span style="height:188px"></span></div><div class="label vcol " data-id="d7" style="left:124.1px;top:226px;width:12px"><span style="height:154px"></span></div><div class="label vcol " data-id="d8" style="left:140.4px;top:225px;width:12px"><span style="height:155px"></span></div><div class="label vcol " data-id="d9" style="left:156.7px;top:228px;width:12px"><span style="height:152px"></span></div><div class="label vcol " data-id="d10" style="left:173px;top:226px;width:12px"><span style="height:154px"></span></div><div class="label vcol " data-id="d11" style="left:189.3px;top:223px;width:12px"><span style="height:157px"></span></div><div class="label vcol peak" data-id="d12" style="left:205.6px;top:184px;width:12px"><span style="height:196px"></span></div><div class="label vcol peak" data-id="d13" style="left:221.9px;top:185px;width:12px"><span style="height:195px"></span></div><div class="label vcol " data-id="d14" style="left:238.2px;top:224px;width:12px"><span style="height:156px"></span></div><div class="label vcol " data-id="d15" style="left:254.5px;top:222px;width:12px"><span style="height:158px"></span></div><div class="label vcol " data-id="d16" style="left:270.8px;top:221px;width:12px"><span style="height:159px"></span></div><div class="label vcol " data-id="d17" style="left:287.1px;top:220px;width:12px"><span style="height:160px"></span></div><div class="label vcol " data-id="d18" style="left:303.4px;top:222px;width:12px"><span style="height:158px"></span></div><div class="label vcol peak" data-id="d19" style="left:319.7px;top:179px;width:12px"><span style="height:201px"></span></div><div class="label vcol peak" data-id="d20" style="left:336px;top:181px;width:12px"><span style="height:199px"></span></div><div class="label vcol " data-id="d21" style="left:352.3px;top:218px;width:12px"><span style="height:162px"></span></div><div class="label vcol " data-id="d22" style="left:368.6px;top:218px;width:12px"><span style="height:162px"></span></div><div class="label vcol " data-id="d23" style="left:384.9px;top:219px;width:12px"><span style="height:161px"></span></div><div class="label vcol " data-id="d24" style="left:401.2px;top:217px;width:12px"><span style="height:163px"></span></div><div class="label vcol " data-id="d25" style="left:417.5px;top:215px;width:12px"><span style="height:165px"></span></div><div class="label vcol peak" data-id="d26" style="left:433.8px;top:176px;width:12px"><span style="height:204px"></span></div><div class="label vcol peak" data-id="d27" style="left:450.1px;top:173px;width:12px"><span style="height:207px"></span></div><div class="label vcol " data-id="d28" style="left:466.4px;top:216px;width:12px"><span style="height:164px"></span></div><div class="label vcol " data-id="d29" style="left:482.7px;top:215px;width:12px"><span style="height:165px"></span></div><div class="label vcol " data-id="d30" style="left:499px;top:214px;width:12px"><span style="height:166px"></span></div><div class="label vcol " data-id="d31" style="left:515.3px;top:212px;width:12px"><span style="height:168px"></span></div><div class="label vcol " data-id="d32" style="left:531.6px;top:212px;width:12px"><span style="height:168px"></span></div><div class="label vcol peak" data-id="d33" style="left:547.9px;top:169px;width:12px"><span style="height:211px"></span></div><div class="label vcol peak" data-id="d34" style="left:564.2px;top:170px;width:12px"><span style="height:210px"></span></div><div class="label vcol " data-id="d35" style="left:580.5px;top:211px;width:12px"><span style="height:169px"></span></div><div class="label vcol " data-id="d36" style="left:596.8px;top:209px;width:12px"><span style="height:171px"></span></div><div class="label vcol " data-id="d37" style="left:613.1px;top:210px;width:12px"><span style="height:170px"></span></div><div class="label vcol " data-id="d38" style="left:629.4px;top:208px;width:12px"><span style="height:172px"></span></div><div class="label vcol " data-id="d39" style="left:645.7px;top:210px;width:12px"><span style="height:170px"></span></div><div class="label vcol peak" data-id="d40" style="left:662px;top:162px;width:12px"><span style="height:218px"></span></div><div class="label vcol peak" data-id="d41" style="left:678.3px;top:166px;width:12px"><span style="height:214px"></span></div><div class="label vcol " data-id="d42" style="left:694.6px;top:204px;width:12px"><span style="height:176px"></span></div><div class="label vcol " data-id="d43" style="left:710.9px;top:207px;width:12px"><span style="height:173px"></span></div><div class="label vcol " data-id="d44" style="left:727.2px;top:205px;width:12px"><span style="height:175px"></span></div><div class="label vcol " data-id="d45" style="left:743.5px;top:206px;width:12px"><span style="height:174px"></span></div><div class="label vcol " data-id="d46" style="left:759.8px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol peak" data-id="d47" style="left:776.1px;top:160px;width:12px"><span style="height:220px"></span></div><div class="label vcol peak" data-id="d48" style="left:792.4px;top:156px;width:12px"><span style="height:224px"></span></div><div class="label vcol " data-id="d49" style="left:808.7px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol " data-id="d50" style="left:825px;top:201px;width:12px"><span style="height:179px"></span></div><div class="label vcol " data-id="d51" style="left:841.3px;top:203px;width:12px"><span style="height:177px"></span></div><div class="label vcol " data-id="d52" style="left:857.6px;top:198px;width:12px"><span style="height:182px"></span></div><div class="label vcol cal" data-id="d53" style="left:873.9px;top:38px;width:12px"><span style="height:342px"></span></div><div class="label vcol peak" data-id="d54" style="left:890.2px;top:155px;width:12px"><span style="height:225px"></span></div><div class="label vcol peak" data-id="d55" style="left:906.5px;top:152px;width:12px"><span style="height:228px"></span></div><div class="label vcol " data-id="d56" style="left:922.8px;top:200px;width:12px"><span style="height:180px"></span></div><div class="label vcol " data-id="d57" style="left:939.1px;top:197px;width:12px"><span style="height:183px"></span></div><div class="label vcol " data-id="d58" style="left:955.4px;top:197px;width:12px"><span style="height:183px"></span></div><div class="label vcol bad" data-id="d59" style="left:971.7px;top:306px;width:12px"><span style="height:74px"></span></div><div class="label vcol " data-id="d60" style="left:988px;top:198px;width:12px"><span style="height:182px"></span></div><div class="label vmark" data-id="m53" style="left:875.9px;top:16px;width:13px"></div><div class="label vmark" data-id="m59" style="left:973.7px;top:284px;width:13px"></div><svg class="wires" viewBox="0 0 1440 510" aria-hidden="true"><defs><marker id="arr-D4_2_contracts_observability-8-normal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#61717c" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-8-em" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#348f8d" stroke-width="1.3"/></marker><marker id="arr-D4_2_contracts_observability-8-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#c46558" stroke-width="1.3"/></marker></defs><path class="wire axis" marker-end="url(#arr-D4_2_contracts_observability-8-normal)" data-id="c-axis" d="M0 382 L1010 382"/></svg><div class="label tick" data-id="ct0" style="left:-30px;top:392px;width:100px">1 Aug</div><div class="label tick" data-id="ct14" style="left:198.2px;top:392px;width:100px">15 Aug</div><div class="label tick" data-id="ct31" style="left:475.29999999999995px;top:392px;width:100px">1 Sep</div><div class="label tick" data-id="ct45" style="left:703.5px;top:392px;width:100px">15 Sep</div><div class="label tick" data-id="ct59" style="left:931.7px;top:392px;width:100px">29 Sep</div><div class="label answer" data-id="n-alerts" style="left:1080px;top:0px;width:360px"><b>2</b>alerts in two months</div><p class="annotation " style="left:1080px;top:110px;width:360px">23 Sep · +102% · on the calendar: National Day</p><p class="annotation red" style="left:1080px;top:230px;width:360px">29 Sep · −57% · the incident</p></div>
+  <div class="callout tip"><b>Takeaway.</b> <strong>Model the seasonality:</strong> weekdays, Ramadan, month-end. Then only the unusual days alert.</div>
+  <aside class="notes">Lab 3.4 task 5. For Tuesday 29 September the usual value is the median of the four previous Tuesdays, 720.5 orders; 308 is 57% below. For National Day, the four previous Wednesdays give 704; 1,423 is 102% above. Compare with yesterday instead and every weekend looks like an incident. This check warns rather than blocks, since an odd day may be real. Two alerts in two months, both worth reading.</aside>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checkpoint</div>
+  <h2>Click the answer</h2>
+  <div class="quiz">
+    <p class="lead">A blocking check on <code>ops/delivery_events</code> fails. What happens to <code>ops/delivered_per_store</code>, which reads it?</p>
+    <div class="opts">
+      <div class="opt" data-k="A">It's built anyway, with a warning attached</div>
+      <div class="opt" data-k="B">It's rebuilt from yesterday's copy of the events</div>
+      <div class="opt" data-k="C" data-ok>It's skipped, and keeps what it held from its last build</div>
+      <div class="opt" data-k="D">It's emptied, so nobody reads wrong data</div>
+    </div>
+    <div class="callout tip why"><b>Why.</b> Blocking means nothing downstream runs in that run. The table stays stale but not wrong, and the failure is on record for someone to act on.</div>
+  </div>
+  <aside class="notes">Answer C. Common confusion with A: that's what a non-blocking check does.</aside>
+</section>
+
+<section class="slide lab top" data-label="Lab 3.4">
+  <div class="cols cols-2 mid">
+    <div>
+      <div class="lab-tag">Lab 3.4 · 25 min</div>
+      <h2>Orchestrating Qafila with Dagster</h2>
+      <p class="lead small">Write assets, put dbt in the same graph, schedule it, and add a blocking check and a volume check.</p>
+      <a class="nb" href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D3_4_orchestration_dagster.ipynb" target="_blank" rel="noopener">labs/D3_4_orchestration_dagster.ipynb ↗</a>
+    </div>
+    <ul class="checklist">
+      <li>1 · Write ingestion assets <span class="min">5 min</span></li>
+      <li>2 · Put dbt in the graph <span class="min">6 min</span></li>
+      <li>3 · Schedule the graph <span class="min">3 min</span></li>
+      <li>4 · Stop bad data with a blocking check <span class="min">6 min</span></li>
+      <li>5 · Add a volume check <span class="min">5 min</span></li>
+      <li class="stretch">✱ Stretch · Retry a flaky API</li>
+    </ul>
+  </div>
+  <aside class="notes">Everything runs in the notebook, with no server. The setup cell builds the star first, so it takes about a minute. Open the graph player and step through the blocked run: students like seeing the check stop it. Expected: 312 duplicates, then 0; the volume check flags 23 and 29 September and the run still succeeds.</aside>
+</section>
+
+<section class="slide " data-label="Wrap-up">
+  <div class="kicker">Day 3 wrap-up</div>
+  <h2>What you built today</h2>
+  <div class="flow mt-s">
+    <div class="step c-teal"><b>Session 1</b>a star, by hand</div><div class="arrow">→</div>
+    <div class="step c-cyan"><b>Session 2</b>the star, in dbt</div><div class="arrow">→</div>
+    <div class="step c-coral"><b>Session 3</b>tests and quarantine</div><div class="arrow">→</div>
+    <div class="step c-purple"><b>Session 4</b>a graph on a schedule</div>
+  </div>
+  <div class="cols cols-3 mt">
+    <div class="card c-teal"><h4>Finish “one row per ___”</h4><p class="small mb0">Grain first, then numbers. Most wrong dashboards are a grain mistake: 967,491 SAR of fees that were never charged.</p></div>
+    <div class="card c-coral"><h4>Silent failures are the real ones</h4><p class="small mb0">Fan-out, lost sales and stale tables raise no error. Tests and checks are how you hear them.</p></div>
+    <div class="card c-purple"><h4>Every warning needs an owner</h4><p class="small mb0">Block when wrong costs more than late. A warning or a quarantine nobody reads is just noise.</p></div>
+  </div>
+  <aside class="notes">Ask: which of today's failures gave no error at all? Fan-out, the inner join, the stale report, the doubled load, the 40% load. That's the case for everything in Sessions 3 and 4.</aside>
+</section>
+
+<section class="slide " data-label="Capstone">
+  <div class="kicker">Capstone</div>
+  <h2>Today is the middle of your capstone</h2>
+  <div class="art-row mt">
+    <div class="art stakeholders" style="width:240px"></div>
+    <ul class="bullets">
+      <li><b>Model:</b> write your definition and your grain before any code</li>
+      <li><b>Build:</b> a dbt project, with staging, marts and a <code>ref</code> for every arrow</li>
+      <li><b>Trust:</b> tests, a quarantine with a named owner, and a blocking check</li>
+      <li><b>Run:</b> <code>labs/capstone/pipeline.py</code> is today's Lab 3.4 pattern at full size</li>
+    </ul>
+  </div>
+  <aside class="notes">Teams were formed yesterday. Kickoff is Day 4, Session 4. Suggest that each team writes one sentence tonight: one row per what? It's the fastest way to find out they disagree.</aside>
+</section>
+
+<section class="slide dark" data-label="Tomorrow">
+  <div class="kicker">Tomorrow</div>
+  <h2>Day 4: Scale and production</h2>
+  <div class="cols cols-4 mt">
+    <div class="card c-teal"><h4>Session 1</h4><p class="small mb0">Lakehouse with Iceberg: why a folder isn't a table</p></div>
+    <div class="card c-cyan"><h4>Session 2</h4><p class="small mb0">Spark: do you need it? How to read a plan</p></div>
+    <div class="card c-coral"><h4>Session 3</h4><p class="small mb0">Streaming: when to stream, offsets, windows</p></div>
+    <div class="card c-purple"><h4>Session 4</h4><p class="small mb0">Governance and privacy, and your capstone kickoff</p></div>
+  </div>
+  <aside class="notes">Unfinished labs aren't needed for tomorrow: every lab starts from the raw data or a warehouse it builds itself.</aside>
+</section>
+</div>
+<script src="https://sdaiaacademy.github.io/slides/deck.js"></script>
+<script src="../assets/course.js"></script>
+</body>
+</html>

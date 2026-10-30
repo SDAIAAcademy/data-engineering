@@ -1,22 +1,19 @@
 # %% [markdown]
-# # Lab 2.2 · Model Qafila as a star schema
+# # Lab 3.1 · A star schema for Qafila
 #
-# Day 2 · Session 2 (Dimensional modeling) · 25 min. What you'll build, in plain SQL:
-# - a declared, tested **grain** for Qafila's sales fact;
-# - four **dimensions** (date, product, store, customer), with surrogate keys and an "unknown" member;
-# - `fct_order_items`, reconciled to the source to the halala;
-# - answers to real business questions, and the classic **fan-out** mistake (and its fix).
-#
-# In Lab 2.3 the same model moves into dbt. Doing it by hand first shows what dbt automates and what it doesn't: the
-# modeling decisions are yours either way.
+# Day 3 · Session 1 · 25 min. Finance asks "how much did we sell?" and you build the tables that answer it, in plain SQL.
+# What you'll do:
+# - write down what "revenue" means, and test what one row of the sales table stands for (its **grain**);
+# - build the star: `fct_order_items` in the middle, four dimensions around it, with an **unknown member**;
+# - walk into the **fan-out** trap on purpose, then fix it.
 #
 # **Tasks**
-# - [ ] 1 · Declare the grain and test it (4')
-# - [ ] 2 · Build four dimensions, including an unknown member (7')
-# - [ ] 3 · Build the fact table and reconcile it (6')
-# - [ ] 4 · Answer business questions from the star (5')
-# - [ ] 5 · Spot the fan-out trap (3')
-# - [ ] ✱ Stretch · One big table vs. star: size and speed
+# - [ ] 1 · Compare three revenue totals (4')
+# - [ ] 2 · Test the grain of the order lines (4')
+# - [ ] 3 · Build the dimensions with an unknown member (6')
+# - [ ] 4 · Build the fact table and reconcile it (6')
+# - [ ] 5 · Spot the fan-out and fix it (5')
+# - [ ] ✱ Stretch · Measure the National Day uplift per city
 
 # %%
 import os, sys, subprocess
@@ -39,265 +36,326 @@ U.ensure_data()
 print("data:", U.RAW, "| quick mode:", U.QUICK)
 
 # %%
+import shutil
+
 import duckdb
-import pandas as pd
 
-U.build_warehouse()
-OUT = U.lab_dir("D2_2", reset=True)
-con = duckdb.connect(str(OUT / "qafila_model.duckdb"))         # our model lives in its own file...
+U.build_warehouse()                      # the raw tables, as loaded from Qafila's sources
+OUT = U.lab_dir("D3_1", reset=True)
+DB = OUT / "qafila.duckdb"
+shutil.copy(U.WAREHOUSE_DB, DB)          # your private copy: nothing here touches other labs
+con = duckdb.connect(str(DB))
 con.sql("SET enable_progress_bar = false")
-con.sql(f"ATTACH '{U.WAREHOUSE_DB.as_posix()}' AS wh (READ_ONLY)")   # ...and reads the bronze layer from the warehouse
-con.sql("CREATE SCHEMA IF NOT EXISTS star")
+con.sql("CREATE SCHEMA marts")           # marts = the tables people query
 q = lambda sql: con.sql(sql).df()
+print("raw tables:", [r[0] for r in con.sql("SELECT table_name FROM information_schema.tables WHERE table_schema = 'raw' ORDER BY 1").fetchall()])
 
 # %% [markdown]
-# ## 1 · Declare the grain and test it (4')
+# ## 1 · Compare three revenue totals (4')
 #
-# The **grain** is the one sentence that says what a fact row means. Everything else (keys, measures, which dimensions
-# can attach) follows from it. For Qafila's sales:
-#
-# > **One row per order line**: one product in one order, with its quantity and price at the time of ordering.
-#
-# A grain is a claim about the data, so test it.
-#
-# ✏️ **Exercise** · Compute `n_lines` (rows in `wh.raw.order_items`) and `n_keys` (distinct `(order_id, line_no)` pairs).
-# The grain holds if they're equal.
+# Finance asks: how much did we sell in August and September? Here are three honest answers from the same tables.
+# A line's **net amount** is `quantity × unit_price − discount`.
 
 # %%
-# BEGIN SOLUTION
-n_lines, n_keys = con.sql("""
-    SELECT count(*), count(DISTINCT (order_id, line_no)) FROM wh.raw.order_items
-""").fetchall()[0]
-# END SOLUTION
-U.check(n_lines == n_keys, f"(order_id, line_no) is unique across {n_lines:,} lines: the grain holds")
+q("""
+    WITH lines AS (
+        SELECT i.*, o.status, i.quantity * i.unit_price - i.discount AS net
+        FROM raw.order_items i JOIN raw.orders o USING (order_id)
+    )
+    SELECT 'every order line' AS answer, round(sum(net)) AS sar FROM lines
+    UNION ALL SELECT 'delivered orders only', round(sum(net) FILTER (WHERE status = 'delivered')) FROM lines
+    UNION ALL SELECT 'delivered, plus delivery fees',
+           round(sum(net) FILTER (WHERE status = 'delivered')) + (SELECT sum(delivery_fee) FROM raw.orders WHERE status = 'delivered') FROM lines
+""")
 
 # %% [markdown]
-# Which measures live at this grain? `quantity`, `unit_price`, `discount` and `net_amount` are **line-level**. The
-# `delivery_fee` is **order-level**: it doesn't belong in this fact (Task 5 shows what happens if you put it there anyway).
+# 🔍 Nobody made a mistake: each total answers a slightly different question. The fix is a written **business definition**.
+# For this course:
 #
-# ## 2 · Build four dimensions, including an unknown member (7')
+# > **Product revenue** is the net amount of delivered order lines with a positive quantity. Delivery fees are a separate
+# > number. The city is the store's city.
 #
-# Dimensions hold the descriptive context you filter and group by. Two conventions we follow:
-# - **Surrogate keys** (`product_key`, ...): integers owned by the warehouse, independent of source IDs. They're essential
-#   once a dimension keeps history (SCD2: several rows per product) or merges sources with clashing IDs.
-# - An **unknown member** (key `-1`): facts whose reference is missing (an erased customer) still join, instead of
-#   silently disappearing from inner joins.
+# Why "positive quantity"? Look at the lines where it isn't. They are entry errors, not refunds (refunds are an order status).
+
+# %%
+q("""
+    SELECT count(*) AS bad_lines,
+           count(*) FILTER (WHERE o.status = 'delivered') AS on_delivered_orders,
+           round(sum(i.quantity * i.unit_price - i.discount) FILTER (WHERE o.status = 'delivered')) AS sar_on_delivered
+    FROM raw.order_items i JOIN raw.orders o USING (order_id)
+    WHERE i.quantity <= 0
+""")
+
+# %% [markdown]
+# 🔍 What is revenue under the definition, given the table above? Work it out from 6,494,684, then check against Task 4.
 #
-# The date dimension is generated, not loaded:
+# ## 2 · Test the grain of the order lines (4')
+#
+# The **grain** is the one sentence that says what one row means. Ours:
+#
+# > **One row per order line**: one product in one order.
+#
+# A grain is a claim about the data, so test it. Khalid's order 5043883 has two lines:
+
+# %%
+q("SELECT order_id, line_no, product_id, quantity, unit_price, discount FROM raw.order_items WHERE order_id = 5043883")
+
+# %% [markdown]
+# ✏️ **Exercise** · Complete the query: count all rows of `raw.order_items`, and count the distinct `(order_id, line_no)` pairs.
+# The grain holds if the two numbers are equal.
+#
+# *Hint:* `count(DISTINCT (order_id, line_no))` counts distinct pairs.
+
+# %%
+def grain_counts_sql():
+    # BEGIN SOLUTION
+    return "SELECT count(*), count(DISTINCT (order_id, line_no)) FROM raw.order_items"
+    # END SOLUTION
+
+# %%
+try:
+    n_lines, n_keys = con.sql(grain_counts_sql()).fetchall()[0]
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    n_lines, n_keys = con.sql("SELECT count(*), count(DISTINCT (order_id, line_no)) FROM raw.order_items").fetchall()[0]
+print(f"rows: {n_lines:,} | distinct keys: {n_keys:,}   (expected: 172,545 and 172,545)")
+U.check(n_lines == n_keys == 172_545, "(order_id, line_no) is unique: the grain holds")
+
+# %% [markdown]
+# ## 3 · Build the dimensions with an unknown member (6')
+#
+# A **dimension** table holds the descriptions you filter and group by: when, what, where, who. Its key is the id the
+# source already uses (`product_id`, `store_id`, `customer_id`). Many warehouses mint their own integer key instead, called
+# a surrogate key, so one source id can have several versions; we don't need that here.
+#
+# The date dimension is generated, one row per day. The other three come from the raw tables. Direct identifiers (name,
+# email, mobile, national ID, IBAN) stay out of `dim_customers`: analysis doesn't need them.
 
 # %%
 con.sql("""
-    CREATE OR REPLACE TABLE star.dim_date AS
-    SELECT strftime(d, '%Y%m%d')::INTEGER AS date_key, d AS date_day, year(d) AS year, month(d) AS month,
-           monthname(d) AS month_name, dayname(d) AS day_name, weekofyear(d) AS iso_week,
-           dayofweek(d) IN (5, 6) AS is_weekend,                    -- Friday, Saturday
+    CREATE TABLE marts.dim_date AS
+    SELECT d AS date_day, year(d) AS year, month(d) AS month, dayname(d) AS day_name, weekofyear(d) AS iso_week,
+           dayofweek(d) IN (5, 6) AS is_weekend,            -- the Saudi weekend: Friday, Saturday
            d = DATE '2026-09-23' AS is_national_day
-    FROM (SELECT unnest(range(DATE '2026-08-01', DATE '2026-10-01', INTERVAL 1 DAY))::DATE AS d)
+    FROM (SELECT unnest(range(DATE '2026-01-01', DATE '2027-01-01', INTERVAL 1 DAY))::DATE AS d)
 """)
-q("SELECT * FROM star.dim_date WHERE date_day BETWEEN '2026-09-22' AND '2026-09-26'")
+con.sql("""
+    CREATE TABLE marts.dim_products AS
+    SELECT product_id, trim(sku) AS sku, name_en AS product_name_en, category, brand, unit_price AS list_price
+    FROM raw.products
+""")
+con.sql("CREATE TABLE marts.dim_stores AS SELECT store_id, name_en AS store_name_en, city FROM raw.stores")
+q("SELECT * FROM marts.dim_date WHERE date_day BETWEEN '2026-09-22' AND '2026-09-26'")
 
 # %% [markdown]
-# ✏️ **Exercise** · Build the other three dimensions in schema `star`:
-# - `dim_product`: `product_key` (1, 2, 3... by `product_id`), `product_id`, `sku` (trimmed), `name_en`, `category`, `brand`, `list_price`;
-# - `dim_store`: `store_key` (1, 2, 3... by `store_id`), `store_id`, `store_name` (`name_en`), `city`;
-# - `dim_customer`: `customer_key` (1, 2, 3... by `customer_id`), `customer_id`, `city`, `district`, `signup_date`; **no**
-#   name, email, mobile, national ID or IBAN (analytics doesn't need them). Then add the unknown member:
-#   `(-1, -1, 'Unknown', 'Unknown', NULL)`.
+# Before building `dim_customers`, see the problem. Some orders point to customers who no longer exist (erased on request),
+# so an inner join quietly drops their sales:
 
 # %%
-# BEGIN SOLUTION
-con.sql("""
-    CREATE OR REPLACE TABLE star.dim_product AS
-    SELECT row_number() OVER (ORDER BY product_id) AS product_key, product_id, trim(sku) AS sku, name_en,
-           category, brand, unit_price AS list_price
-    FROM wh.raw.products
+q("""
+    WITH o AS (SELECT count(*) AS n FROM raw.orders), j AS (SELECT count(*) AS n FROM raw.orders JOIN raw.customers USING (customer_id))
+    SELECT o.n AS all_orders, j.n AS after_inner_join, o.n - j.n AS orders_lost FROM o, j
 """)
-con.sql("""
-    CREATE OR REPLACE TABLE star.dim_store AS
-    SELECT row_number() OVER (ORDER BY store_id) AS store_key, store_id, name_en AS store_name, city
-    FROM wh.raw.stores
-""")
-con.sql("""
-    CREATE OR REPLACE TABLE star.dim_customer AS
-    SELECT row_number() OVER (ORDER BY customer_id) AS customer_key, customer_id, city, district,
-           created_at::DATE AS signup_date
-    FROM wh.raw.customers
-""")
-con.sql("INSERT INTO star.dim_customer VALUES (-1, -1, 'Unknown', 'Unknown', NULL)")
-# END SOLUTION
-q("""SELECT 'dim_product' AS dim, count(*) AS rows FROM star.dim_product
-     UNION ALL SELECT 'dim_store', count(*) FROM star.dim_store
-     UNION ALL SELECT 'dim_customer', count(*) FROM star.dim_customer""")
-
-# %%
-U.check(q("SELECT count(*) AS n FROM star.dim_customer WHERE customer_key = -1").n[0] == 1, "unknown member present")
-U.check("national_id" not in con.table("star.dim_customer").columns, "no direct identifiers in the customer dimension")
 
 # %% [markdown]
-# ## 3 · Build the fact table and reconcile it (6')
+# The fix is an **unknown member**: one extra row with `customer_id = -1`. The fact points lost customers at it, so every
+# sale still joins.
 #
-# The fact table holds **keys** (to dimensions) and **measures** (numbers you add up), at the declared grain.
-# Degenerate dimensions such as `order_id` and `order_status` stay in the fact: they have no other attributes worth a table.
+# ✏️ **Exercise** · Complete `dim_customers`: add the unknown member with `UNION ALL`. The columns are
+# `customer_id, city, district, signup_date`; use `-1, 'Unknown', 'Unknown', NULL`.
 #
-# ✏️ **Exercise** · Create `star.fct_order_items` with: `order_id`, `line_no`, `date_key` (Riyadh date of the order as
-# `YYYYMMDD` integer: `created_at` is UTC text, add 3 hours), `customer_key` (`-1` when the customer no longer exists),
-# `product_key`, `store_key`, `order_status`, `quantity`, `unit_price`, `discount`, `net_amount` (= quantity × unit_price − discount).
-# Keep every line for now, including the negative quantities (we deal with them in Lab 2.4).
+# *Hint:* `... FROM raw.customers UNION ALL SELECT ...`
 
 # %%
-# BEGIN SOLUTION
+def dim_customers_sql():
+    base = "SELECT customer_id, city, district, created_at::DATE AS signup_date FROM raw.customers"
+    # BEGIN SOLUTION
+    return base + " UNION ALL SELECT -1, 'Unknown', 'Unknown', NULL"
+    # END SOLUTION
+
+# %%
+try:
+    con.sql(f"CREATE OR REPLACE TABLE marts.dim_customers AS {dim_customers_sql()}")
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    con.sql("""CREATE OR REPLACE TABLE marts.dim_customers AS
+               SELECT customer_id, city, district, created_at::DATE AS signup_date FROM raw.customers
+               UNION ALL SELECT -1, 'Unknown', 'Unknown', NULL""")
+print("expected: exactly one row with customer_id = -1")
+U.check(q("SELECT count(*) AS n FROM marts.dim_customers WHERE customer_id = -1").n[0] == 1, "unknown member present")
+q("""SELECT 'dim_date' AS dimension, count(*) AS rows FROM marts.dim_date
+     UNION ALL SELECT 'dim_products', count(*) FROM marts.dim_products
+     UNION ALL SELECT 'dim_stores', count(*) FROM marts.dim_stores
+     UNION ALL SELECT 'dim_customers', count(*) FROM marts.dim_customers""")
+
+# %% [markdown]
+# ## 4 · Build the fact table and reconcile it (6')
+#
+# A **fact** table holds one row per event at the declared grain: keys that point to dimensions, and numbers you add up.
+# Read this query slowly. It makes three decisions for you:
+# - `order_date` is the **Riyadh** date: the app stores UTC, Riyadh is UTC+3;
+# - `customer_id` falls back to `-1`, your unknown member;
+# - lines with a quantity of zero or less stay out. In Lab 3.3 they are reported, not lost.
+
+# %%
 con.sql("""
-    CREATE OR REPLACE TABLE star.fct_order_items AS
-    SELECT i.order_id, i.line_no,
-           strftime((o.created_at::TIMESTAMP + INTERVAL 3 HOUR)::DATE, '%Y%m%d')::INTEGER AS date_key,
-           coalesce(c.customer_key, -1)       AS customer_key,
-           p.product_key,
-           s.store_key,
-           o.status                           AS order_status,
+    CREATE OR REPLACE TABLE marts.fct_order_items AS
+    SELECT i.order_id * 100 + i.line_no                                 AS order_line_id,
+           i.order_id, i.line_no,
+           (o.created_at::TIMESTAMP + INTERVAL 3 HOUR)::DATE            AS order_date,
+           coalesce(c.customer_id, -1)                                  AS customer_id,
+           o.store_id,
+           i.product_id,
+           o.status                                                     AS order_status,
            i.quantity, i.unit_price, i.discount,
-           round(i.quantity * i.unit_price - i.discount, 2) AS net_amount
-    FROM wh.raw.order_items i
-    JOIN wh.raw.orders o USING (order_id)
-    LEFT JOIN star.dim_customer c ON c.customer_id = o.customer_id
-    JOIN star.dim_product p ON p.product_id = i.product_id
-    JOIN star.dim_store s ON s.store_id = o.store_id
+           round(i.quantity * i.unit_price - i.discount, 2)             AS net_amount
+    FROM raw.order_items i
+    JOIN raw.orders o USING (order_id)
+    LEFT JOIN marts.dim_customers c ON c.customer_id = o.customer_id
+    WHERE i.quantity > 0
 """)
-# END SOLUTION
-q("SELECT * FROM star.fct_order_items LIMIT 3")
+q("SELECT order_line_id, order_date, customer_id, store_id, product_id, order_status, net_amount FROM marts.fct_order_items WHERE order_id = 5043883")
 
 # %% [markdown]
-# Reconciliation: the fact must have exactly the source's rows and the source's money. If a join silently dropped or
-# duplicated rows, these numbers tell you.
+# 🔍 Khalid ordered at 22:35 UTC on 27 September. Which date does the fact show, and why?
+#
+# **Reconcile** before anyone trusts it: every source line must be either in the fact or set aside on purpose, and the money
+# must match.
 
 # %%
 recon = q("""
-    SELECT (SELECT count(*) FROM wh.raw.order_items)                                             AS source_rows,
-           (SELECT count(*) FROM star.fct_order_items)                                           AS fact_rows,
-           (SELECT round(sum(quantity * unit_price - discount), 2) FROM wh.raw.order_items)       AS source_sar,
-           (SELECT round(sum(net_amount), 2) FROM star.fct_order_items)                          AS fact_sar,
-           (SELECT count(*) FROM star.fct_order_items WHERE customer_key = -1)                   AS unknown_customer_rows
+    SELECT (SELECT count(*) FROM raw.order_items)                                     AS source_lines,
+           (SELECT count(*) FROM marts.fct_order_items)                               AS fact_lines,
+           (SELECT count(*) FROM raw.order_items WHERE quantity <= 0)                 AS set_aside,
+           (SELECT count(*) FROM marts.fct_order_items WHERE customer_id = -1)        AS lines_on_unknown_customer,
+           (SELECT round(sum(quantity * unit_price - discount)) FROM raw.order_items WHERE quantity > 0) AS source_sar,
+           (SELECT round(sum(net_amount)) FROM marts.fct_order_items)                 AS fact_sar
 """)
 recon
 
 # %%
-U.check(recon.source_rows[0] == recon.fact_rows[0], "no rows lost or duplicated")
-U.check(abs(recon.source_sar[0] - recon.fact_sar[0]) < 1, "revenue reconciles")
-U.check(recon.unknown_customer_rows[0] > 0, "lines of erased customers kept via the unknown member")
+U.check(recon.source_lines[0] == recon.fact_lines[0] + recon.set_aside[0], "every source line is in the fact or set aside")
+U.check(abs(recon.source_sar[0] - recon.fact_sar[0]) <= 1, "the money reconciles")
+U.check(recon.lines_on_unknown_customer[0] > 0, "the sales of erased customers are kept")
 
 # %% [markdown]
-# ## 4 · Answer business questions from the star (5')
-#
-# Star queries all look alike: filter and group by dimension attributes, sum fact measures. Here is one:
+# Now the star does its job. Every star query looks the same: join to a dimension, filter, group, sum. Revenue per city, by
+# the definition:
 
 # %%
-q("""
-    SELECT p.category, round(sum(f.net_amount)) AS revenue_sar, sum(f.quantity) AS units
-    FROM star.fct_order_items f JOIN star.dim_product p USING (product_key)
+by_city = q("""
+    SELECT s.city, round(sum(f.net_amount), 2) AS revenue_sar, count(DISTINCT f.order_id) AS orders
+    FROM marts.fct_order_items f JOIN marts.dim_stores s USING (store_id)
     WHERE f.order_status = 'delivered'
-    GROUP BY ALL ORDER BY revenue_sar DESC LIMIT 5
+    GROUP BY s.city ORDER BY revenue_sar DESC
 """)
+print(f"total product revenue: {by_city.revenue_sar.sum():,.0f} SAR")
+by_city
 
 # %% [markdown]
-# ✏️ **Exercise** · Answer two questions with star queries (delivered orders only):
-# - `weekend`: average **daily** revenue on weekend days vs. weekdays, by city (columns `city`, `is_weekend`, `avg_daily_revenue`);
-# - `national_day`: for each city, revenue on National Day vs. the average of the other September days
-#   (columns `city`, `national_day_revenue`, `other_days_avg`, `uplift` = ratio of the two).
-
-# %%
-# BEGIN SOLUTION
-weekend = q("""
-    WITH daily AS (
-        SELECT d.date_day, d.is_weekend, s.city, sum(f.net_amount) AS revenue
-        FROM star.fct_order_items f
-        JOIN star.dim_date d USING (date_key) JOIN star.dim_store s USING (store_key)
-        WHERE f.order_status = 'delivered'
-        GROUP BY ALL
-    )
-    SELECT city, is_weekend, round(avg(revenue)) AS avg_daily_revenue FROM daily GROUP BY ALL ORDER BY city, is_weekend
-""")
-national_day = q("""
-    WITH daily AS (
-        SELECT d.date_day, d.is_national_day, s.city, sum(f.net_amount) AS revenue
-        FROM star.fct_order_items f
-        JOIN star.dim_date d USING (date_key) JOIN star.dim_store s USING (store_key)
-        WHERE f.order_status = 'delivered' AND d.month = 9
-        GROUP BY ALL
-    )
-    SELECT city,
-           round(max(revenue) FILTER (WHERE is_national_day)) AS national_day_revenue,
-           round(avg(revenue) FILTER (WHERE NOT is_national_day)) AS other_days_avg,
-           round(national_day_revenue / other_days_avg, 2) AS uplift
-    FROM daily GROUP BY city ORDER BY city
-""")
-# END SOLUTION
-display(weekend, national_day)
-
-# %%
-U.check(len(national_day) == 3 and (national_day.uplift > 1.5).all(), "National Day lifted revenue in every city")
-
-# %% [markdown]
-# ## 5 · Spot the fan-out trap (3')
+# ## 5 · Spot the fan-out and fix it (5')
 #
-# Finance wants "revenue including delivery fees". A colleague joins the **order-level** fee onto the **line-level** fact:
+# Finance now wants "revenue including delivery fees". A colleague joins the **order-level** fee onto the **line-level** fact:
 
 # %%
-fanout = q("""
+naive_sql = """
     SELECT round(sum(f.net_amount + o.delivery_fee)) AS revenue_incl_fees
-    FROM star.fct_order_items f JOIN wh.raw.orders o USING (order_id)
+    FROM marts.fct_order_items f JOIN raw.orders o USING (order_id)
     WHERE f.order_status = 'delivered'
-""")
-fanout
+"""
+naive = q(naive_sql).revenue_incl_fees[0]
+q("""SELECT f.order_id, f.line_no, f.net_amount, o.delivery_fee
+     FROM marts.fct_order_items f JOIN raw.orders o USING (order_id) WHERE f.order_id = 5043883""")
 
 # %% [markdown]
-# ✏️ **Exercise** · Compute the correct number, `correct`: line revenue summed at line grain **plus** delivery fees summed
-# at **order** grain (once per order). How much did the naive query overstate fees?
+# 🔍 Khalid paid one 9.00 fee. How many times does it appear? A join makes one row per match, so summing the fee repeats it
+# once per line. That is **fan-out**: a number at a coarse grain, repeated by a join to a finer grain.
+#
+# ✏️ **Exercise** · Fix it. Roll the lines up to one row per order first, then add the fee once per order. Complete
+# `lines` so it returns one row per delivered order with its `net` total.
+#
+# *Hint:* `SELECT order_id, sum(net_amount) AS net FROM ... WHERE ... GROUP BY order_id`
 
 # %%
-# BEGIN SOLUTION
-correct = q("""
-    SELECT round((SELECT sum(net_amount) FROM star.fct_order_items WHERE order_status = 'delivered')
-               + (SELECT sum(delivery_fee) FROM wh.raw.orders WHERE status = 'delivered')) AS revenue_incl_fees
-""")
-# END SOLUTION
-over = fanout.revenue_incl_fees[0] - correct.revenue_incl_fees[0]
-print(f"naive: {fanout.revenue_incl_fees[0]:,.0f} SAR | correct: {correct.revenue_incl_fees[0]:,.0f} SAR | overstated by {over:,.0f} SAR")
-U.check(over > 0, "the naive join counts each order's fee once per line")
-
-# %% [markdown]
-# 🔍 This is **fan-out**: joining a coarser grain to a finer one repeats the coarse measure. It's the most common way
-# dashboards end up wrong. The fix is in the model: order-level measures belong in an order-grain fact (`fct_orders`),
-# and you combine facts at a shared grain (here: day or order), never by joining one fact's rows to the other's.
-#
-# ## ✱ Stretch · One big table vs. star: size and speed
-#
-# Many teams now serve a denormalized **one big table** (OBT) on top of the star: all attributes pre-joined. Build
-# `star.obt_order_items` and compare storage and the speed of the category query above.
+def lines_per_order_sql():
+    # BEGIN SOLUTION
+    return """SELECT order_id, sum(net_amount) AS net
+              FROM marts.fct_order_items WHERE order_status = 'delivered'
+              GROUP BY order_id"""
+    # END SOLUTION
 
 # %%
-# BEGIN SOLUTION
-con.sql("""
-    CREATE OR REPLACE TABLE star.obt_order_items AS
-    SELECT f.*, d.date_day, d.day_name, d.is_weekend, p.name_en AS product, p.category, p.brand,
-           s.store_name, s.city AS store_city, c.city AS customer_city, c.district
-    FROM star.fct_order_items f
-    JOIN star.dim_date d USING (date_key) JOIN star.dim_product p USING (product_key)
-    JOIN star.dim_store s USING (store_key) JOIN star.dim_customer c USING (customer_key)
-""")
-star_q = """SELECT p.category, sum(f.net_amount) FROM star.fct_order_items f JOIN star.dim_product p USING (product_key)
-            WHERE f.order_status = 'delivered' GROUP BY ALL"""
-obt_q = "SELECT category, sum(net_amount) FROM star.obt_order_items WHERE order_status = 'delivered' GROUP BY ALL"
-print(f"star: {U.best_of(lambda: con.sql(star_q).fetchall()) * 1000:.1f} ms | OBT: {U.best_of(lambda: con.sql(obt_q).fetchall()) * 1000:.1f} ms")
-print("columns: fact", len(con.table("star.fct_order_items").columns), "| OBT", len(con.table("star.obt_order_items").columns))
-# END SOLUTION
+FIXED = """
+    WITH lines AS ({lines})
+    SELECT round(sum(l.net + o.delivery_fee)) AS revenue_incl_fees
+    FROM lines l JOIN raw.orders o USING (order_id)
+"""
+REFERENCE = "SELECT order_id, sum(net_amount) AS net FROM marts.fct_order_items WHERE order_status = 'delivered' GROUP BY order_id"
+try:
+    fixed = q(FIXED.format(lines=lines_per_order_sql())).revenue_incl_fees[0]
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    fixed = q(FIXED.format(lines=REFERENCE)).revenue_incl_fees[0]
+expected = q(FIXED.format(lines=REFERENCE)).revenue_incl_fees[0]
+print(f"naive: {naive:,.0f} SAR | fixed: {fixed:,.0f} SAR (expected {expected:,.0f}) | overstated by {naive - fixed:,.0f} SAR, {(naive - fixed) / fixed:.1%}")
+U.check(fixed == expected, "each order's fee counted once")
+U.check(naive > fixed, "the naive join counted each fee once per line")
 
 # %% [markdown]
-# 🔍 On a columnar engine the OBT is often a bit faster and much easier for analysts, at the cost of storage and of
-# rebuilding it whenever a dimension changes. A common pattern: model as a star (the source of truth), serve OBTs or
-# semantic-layer views on top (Lab 4.4).
+# 🔍 The number is plausible, so nobody questions it, and that's the danger: a dashboard can be wrong for months. (The fixed
+# total is 45 SAR short of revenue + all fees: 5 delivered orders hold only bad lines, so they have no row in the fact.) In the
+# model, order-level numbers belong at order grain: Lab 3.2's project has a `fct_orders` with one row per order for this.
 #
+# ## ✱ Stretch · Measure the National Day uplift per city
+#
+# For each city, compare delivered revenue on National Day (`is_national_day`) with the average of the other September days.
+
+# %%
+def stretch():
+    # BEGIN SOLUTION
+    display(q("""
+        WITH daily AS (
+            SELECT d.date_day, d.is_national_day, s.city, sum(f.net_amount) AS revenue
+            FROM marts.fct_order_items f
+            JOIN marts.dim_date d ON d.date_day = f.order_date
+            JOIN marts.dim_stores s USING (store_id)
+            WHERE f.order_status = 'delivered' AND d.month = 9
+            GROUP BY ALL
+        )
+        SELECT city,
+               round(max(revenue) FILTER (WHERE is_national_day)) AS national_day_sar,
+               round(avg(revenue) FILTER (WHERE NOT is_national_day)) AS other_days_avg_sar,
+               round(national_day_sar / other_days_avg_sar, 2) AS uplift
+        FROM daily GROUP BY city ORDER BY city
+    """))
+    # END SOLUTION
+
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write stretch() above if you have time.")
+
+# %% [markdown]
 # ## Checkpoint
 #
-# 1. State the grain of `fct_orders` and of a daily inventory snapshot fact. Which measures are additive across days?
-# 2. Why use surrogate keys when the source already has IDs?
-# 3. A customer moves from Jeddah to Riyadh. With `dim_customer` as built here (Type 1), which reports change retroactively?
-# 4. Where else at Qafila could fan-out bite? (Hint: payments per order, events per order.)
+# 1. Why are three different totals for "how much did we sell?" all correct, and what ends the argument?
+# 2. An order has 5 lines and a 9 SAR fee. You join orders to lines and sum the fee. What do you get for that order, and what's it called?
+# 3. Why keep a `customer_id = -1` row instead of using an inner join?
+#
+# <details><summary>Answers</summary>
+#
+# 1. They answer different questions: all lines, delivered lines, delivered lines plus fees. A written business definition,
+#    kept in one model, ends it.
+# 2. 45 SAR instead of 9: fan-out, an order-level number repeated once per line.
+# 3. An inner join silently drops the sales of erased customers, so revenue no longer matches. The unknown row keeps every sale.
+#
+# </details>
+#
+# ## Carry forward
+#
+# Lab 3.2 builds this same star with the same names (`fct_order_items`, `dim_customers`, `dim_products`, `dim_stores`,
+# `dim_date`) and the same keys, as a dbt project that runs itself in the right order. It starts from the raw data, so you
+# don't need anything from this notebook.
+#
+# Want more? `tools/duckdb.ipynb`.

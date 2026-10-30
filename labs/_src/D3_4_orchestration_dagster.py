@@ -1,18 +1,20 @@
 # %% [markdown]
-# # Lab 4.1 · Orchestrating Qafila with Dagster
+# # Lab 3.4 · Orchestrating Qafila with Dagster
 #
-# Day 4 · Session 1 (Orchestration) · 25 min. Until now you ran every step by hand, in the right order. An orchestrator
-# does that for you: on a schedule, in dependency order, with retries, history and alerts. You'll use **Dagster**, which
-# models pipelines as **assets** (the tables you want to exist) rather than tasks. Everything runs inside this notebook:
-# no server needed.
+# Day 3 · Session 4 · 25 min. So far you ran each step by hand, in the right order. An **orchestrator** does that for you: on
+# a schedule, in dependency order, with a record of every run. **Dagster** models a pipeline as **assets**: the tables you
+# want to exist. Everything runs inside this notebook, with no server. What you'll do:
+# - write assets and put the dbt project in the same graph;
+# - schedule the graph to run every night;
+# - add a blocking check that stops bad data, and a volume check that warns about a quiet day.
 #
 # **Tasks**
-# - [ ] 1 · Ingestion as software-defined assets (5')
-# - [ ] 2 · The dbt project as assets: one lineage graph (6')
-# - [ ] 3 · A daily-partitioned asset and a backfill (6')
-# - [ ] 4 · A blocking asset check catches bad data (5')
-# - [ ] 5 · Schedules and sensors (3')
-# - [ ] ✱ Stretch · Retries against a flaky API
+# - [ ] 1 · Write ingestion assets (5')
+# - [ ] 2 · Put dbt in the graph (6')
+# - [ ] 3 · Schedule the graph (3')
+# - [ ] 4 · Stop bad data with a blocking check (6')
+# - [ ] 5 · Add a volume check (5')
+# - [ ] ✱ Stretch · Retry a flaky API
 
 # %%
 import os, sys, subprocess
@@ -35,299 +37,332 @@ U.ensure_data()
 print("data:", U.RAW, "| quick mode:", U.QUICK)
 
 # %%
-import shutil
+import contextlib
+import io
 import warnings
 from datetime import datetime
 
 warnings.filterwarnings("ignore")             # Dagster flags some APIs as beta/preview
 import dagster as dg
 from dagster_dbt import DbtCliResource, dbt_assets
+import de_viz as V
 
-LAB = U.lab_dir("D4_1", reset=True)
-DB = LAB / "qafila.duckdb"                    # a private copy of the warehouse for this lab
-shutil.copy(U.build_warehouse(), DB)
+LAB = U.lab_dir("D3_4", reset=True)
+PROJ, DB = U.dbt_lab_copy(LAB)                # a private copy of the dbt project (the Lab 3.2 star) and of the raw tables
 os.environ["QAFILA_DUCKDB"] = DB.resolve().as_posix()   # profiles.yml reads the warehouse path from here
-# Silver + gold as Day 2 left them. dbt runs in its own process, so the file is free again when it ends;
-# it also writes target/manifest.json, which Dagster reads.
-setup_dbt = DbtCliResource(project_dir=str(U.DBT_PROJECT), profiles_dir=str(U.DBT_PROJECT))
-setup_dbt.cli(["build", "--quiet"], target_path=Path("target")).wait()
-EVENTS = (U.RAW / "events" / "delivery_events.jsonl").as_posix()
+dbt = DbtCliResource(project_dir=str(PROJ), profiles_dir=str(PROJ))
+dbt.cli(["build", "--quiet"], target_path=Path("target")).wait()   # builds the marts and writes target/manifest.json
 QUIET = {"loggers": {"console": {"config": {"log_level": "CRITICAL"}}}}   # keep notebook output readable
 
-def sql(query, params=None):
-    """Run SQL against the lab warehouse with a short-lived connection (dbt needs the file too)."""
+
+def sql(query):
+    """Run SQL on the lab warehouse with a short-lived connection (dbt needs the file too)."""
     con = U.connect(DB)
-    con.execute("SET python_enable_replacements = false")   # a missing table is an error, not a Python variable
     try:
-        return con.execute(query, params or []).fetchall()
+        return con.execute(query).fetchall()
     finally:
         con.close()
 
+
+sql("CREATE SCHEMA IF NOT EXISTS ops")
+print("ready:", sql("SELECT count(*) FROM marts.fct_orders")[0][0], "orders in the star")
+
 # %% [markdown]
-# ## 1 · Ingestion as software-defined assets (5')
+# ## 1 · Write ingestion assets (5')
 #
-# An **asset** is a function that produces a persistent object (a table, a file, a model) plus its dependencies.
-# Dagster builds the graph from the function signatures and `deps`, and keeps a history of every materialization.
-# The key `["raw", "delivery_events"]` matches dbt's source `raw.delivery_events`, so dbt models will hang off it.
+# An **asset** is a table (or file) you want to exist, plus the function that builds it. `key` is its name, and `deps` says
+# what it's built from. `dg.materialize` runs it and records the run; **materialize** just means "build it now". Here's the
+# loader for the courier events:
 
 # %%
-@dg.asset(key=["raw", "delivery_events"], group_name="ingest", kinds={"duckdb"})
+EVENTS = (U.RAW / "events" / "delivery_events.jsonl").as_posix()
+
+
+@dg.asset(key=["raw", "delivery_events"], group_name="ingest")
 def raw_delivery_events():
-    """Courier app events, loaded as is (JSON lines, three timestamp formats)."""
+    """Courier app events, loaded as they are."""
     sql(f"""CREATE OR REPLACE TABLE raw.delivery_events AS
             SELECT * FROM read_json('{EVENTS}', format = 'newline_delimited', columns = {{
               event_id: 'VARCHAR', order_id: 'BIGINT', store_id: 'VARCHAR', city: 'VARCHAR', courier_id: 'VARCHAR',
               event_type: 'VARCHAR', event_time: 'VARCHAR', lat: 'DOUBLE', lon: 'DOUBLE', ingest_time: 'VARCHAR'}})""")
-    rows = sql("SELECT count(*) FROM raw.delivery_events")[0][0]
-    return dg.MaterializeResult(metadata={"rows": rows})
+    return dg.MaterializeResult(metadata={"rows": sql("SELECT count(*) FROM raw.delivery_events")[0][0]})
 
 # %% [markdown]
-# ✏️ **Exercise** · Write `raw_reviews`, key `["raw", "reviews"]`, same group: load `U.RAW / "reviews.csv"` into
-# `raw.reviews` with `read_csv(...)`, and return the row count as metadata.
+# ✏️ **Exercise** · Write the SQL for a second loader: replace `raw.reviews` with everything in `U.RAW / "reviews.csv"`.
+#
+# *Hint:* `CREATE OR REPLACE TABLE raw.reviews AS SELECT * FROM read_csv('...')`, with the `src` path below.
 
 # %%
-# BEGIN SOLUTION
-@dg.asset(key=["raw", "reviews"], group_name="ingest", kinds={"duckdb"})
-def raw_reviews():
-    """Customer reviews export (Arabic and English)."""
+def load_reviews_sql():
     src = (U.RAW / "reviews.csv").as_posix()
-    sql(f"CREATE OR REPLACE TABLE raw.reviews AS SELECT * FROM read_csv('{src}')")
+    # BEGIN SOLUTION
+    return f"CREATE OR REPLACE TABLE raw.reviews AS SELECT * FROM read_csv('{src}')"
+    # END SOLUTION
+
+# %%
+try:
+    REVIEWS_SQL = load_reviews_sql()
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    REVIEWS_SQL = f"CREATE OR REPLACE TABLE raw.reviews AS SELECT * FROM read_csv('{(U.RAW / 'reviews.csv').as_posix()}')"
+
+
+@dg.asset(key=["raw", "reviews"], group_name="ingest")
+def raw_reviews():
+    """Customer reviews export."""
+    sql(REVIEWS_SQL)
     return dg.MaterializeResult(metadata={"rows": sql("SELECT count(*) FROM raw.reviews")[0][0]})
-# END SOLUTION
+
 
 result = dg.materialize([raw_delivery_events, raw_reviews], run_config=QUIET)
+print("expected: 22,518 events and 3,000 reviews")
 for ev in result.get_asset_materialization_events():
     m = ev.event_specific_data.materialization
     print(m.asset_key.to_user_string(), {k: v.value for k, v in m.metadata.items()})
-
-# %%
-U.check(result.success, "both ingestion assets materialized")
-U.check(sql("SELECT count(*) FROM raw.reviews")[0][0] == 3_000, "raw.reviews loaded")
+U.check(result.success and sql("SELECT count(*) FROM raw.reviews")[0][0] == 3_000, "both assets materialized")
 
 # %% [markdown]
-# ## 2 · The dbt project as assets: one lineage graph (6')
+# ## 2 · Put dbt in the graph (6')
 #
-# `dagster-dbt` reads dbt's `manifest.json` and turns **every model, seed and snapshot into an asset** and every dbt test
-# into an **asset check**. dbt sources become dependencies on assets with the same key, like the ones you just wrote.
+# `dagster-dbt` reads dbt's `target/manifest.json` and turns **every model into an asset** and **every test into a check**, with
+# no Dagster code per model. A dbt source becomes a dependency on the asset with the same key, so `raw/delivery_events` above
+# connects to the models that read it. One graph, from file to mart.
 
 # %%
-dbt = DbtCliResource(project_dir=str(U.DBT_PROJECT), profiles_dir=str(U.DBT_PROJECT))
-
-@dbt_assets(manifest=U.DBT_PROJECT / "target" / "manifest.json")
+@dbt_assets(manifest=PROJ / "target" / "manifest.json")
 def qafila_dbt(context: dg.AssetExecutionContext, dbt: DbtCliResource):
     yield from dbt.cli(["build"], context=context).stream()
 
-defs = dg.Definitions(assets=[raw_delivery_events, raw_reviews, qafila_dbt], resources={"dbt": dbt})
-graph = defs.resolve_asset_graph()
-print(len(qafila_dbt.keys), "dbt assets, e.g.", sorted(k.to_user_string() for k in qafila_dbt.keys)[:4])
-print("upstream of fct_orders:", sorted(k.to_user_string() for k in graph.get(dg.AssetKey(["marts", "fct_orders"])).parent_keys))
+
+ALL = [raw_delivery_events, raw_reviews, qafila_dbt]
+print(len(qafila_dbt.keys), "assets and", len(qafila_dbt.check_keys), "checks from the dbt project")
+V.asset_run(ALL)
 
 # %% [markdown]
-# ✏️ **Exercise** · New courier events just landed. Rebuild **only** `raw/delivery_events` and everything downstream of
-# it: build `selection = dg.AssetSelection.keys(["raw", "delivery_events"]).downstream()` and pass it to
-# `dg.materialize([...all three asset definitions...], selection=selection, resources={"dbt": dbt}, run_config=QUIET)`.
-# Store the result in `run` and the set of materialized asset keys (as strings) in `rebuilt`.
+# New courier events just landed. You don't want to rerun everything: you want `raw/delivery_events` and whatever reads it.
+#
+# 🤔 **Predict** · Does this rebuild `marts/dim_products`? Does it rebuild `marts/fct_orders`?
 
 # %%
-# BEGIN SOLUTION
 selection = dg.AssetSelection.keys(["raw", "delivery_events"]).downstream()
-run = dg.materialize([raw_delivery_events, raw_reviews, qafila_dbt], selection=selection,
-                     resources={"dbt": dbt}, run_config=QUIET)
+with contextlib.redirect_stdout(io.StringIO()):       # dbt's own log would fill the screen; the events below are enough
+    run = dg.materialize(ALL, selection=selection, resources={"dbt": dbt}, run_config=QUIET)
 rebuilt = {ev.event_specific_data.materialization.asset_key.to_user_string() for ev in run.get_asset_materialization_events()}
-# END SOLUTION
-print(sorted(rebuilt))
 checks = run.get_asset_check_evaluations()
-print(f"{len(checks)} dbt tests ran as asset checks; failed: {[c.check_name for c in checks if not c.passed]}")
-
-# %%
-U.check(run.success and "raw/delivery_events" in rebuilt and "marts/fct_orders" in rebuilt, "events and their downstream rebuilt")
+print(sorted(rebuilt))
+print(f"{len(checks)} dbt tests ran as checks; not passed: {[c.check_name for c in checks if not c.passed]}")
+U.check(run.success and "marts/fct_orders" in rebuilt, "events and everything that reads them were rebuilt")
 U.check("marts/dim_products" not in rebuilt and "raw/reviews" not in rebuilt, "unrelated assets were left alone")
 
 # %% [markdown]
-# 🔍 That's the asset-based mindset: you ask for **data** to be fresh ("events and everything that uses them"), and the
-# orchestrator works out which steps to run. In a task-based tool you'd maintain that list of tasks by hand.
+# 🔍 You asked for data to be fresh, and Dagster worked out which steps to run. In a script you'd keep that list by hand.
 #
-# ## 3 · A daily-partitioned asset and a backfill (6')
+# ## 3 · Schedule the graph (3')
 #
-# Event data arrives every day. A **partitioned** asset processes one day per run, so a bad day can be re-run alone and
-# history can be **backfilled** in parallel. Each run must be **idempotent**: running a day twice gives the same table.
+# A **schedule** starts a run on a clock. The clock is written as **cron**, five fields: minute, hour, day, month, weekday.
+# Test it without waiting for the night:
 
 # %%
-DAYS = dg.DailyPartitionsDefinition(start_date="2026-09-24", end_date="2026-10-01")
-print(DAYS.get_partition_keys())
-
-sql("CREATE SCHEMA IF NOT EXISTS ops")
-sql("""CREATE TABLE IF NOT EXISTS ops.delivery_events_daily (
-         day DATE, event_id VARCHAR, order_id BIGINT, store_id VARCHAR, event_type VARCHAR, ingest_time VARCHAR)""")
-
-LOAD_SQL = f"""
-    SELECT ingest_time[:10]::DATE AS day, event_id, order_id, store_id, event_type, ingest_time
-    FROM raw.delivery_events
-    WHERE ingest_time[:10] = $day
-"""
+nightly = dg.ScheduleDefinition(name="nightly", target=dg.AssetSelection.all(),
+                                cron_schedule="30 1 * * *", execution_timezone="Asia/Riyadh")
+ctx = dg.build_schedule_context(scheduled_execution_time=datetime(2026, 9, 28, 1, 30))
+tick = nightly.evaluate_tick(ctx)
+print("cron:", nightly.cron_schedule, "| timezone:", nightly.execution_timezone, "| runs requested:", len(tick.run_requests))
+U.check(len(tick.run_requests) == 1, "the schedule asks for one run per tick")
 
 # %% [markdown]
-# ✏️ **Exercise** · Complete the asset body: for the run's `context.partition_key`, **delete** that day's rows from
-# `ops.delivery_events_daily`, then **insert** `LOAD_SQL` for that day (pass `{"day": day}` as parameters), and return the
-# row count of the day as metadata. Delete-then-insert per partition is what makes it idempotent.
+# 🔍 What would cron for "every Monday at 06:00" look like? (Answer: `0 6 * * 1`.) In production a small service,
+# the Dagster daemon, watches the clock and starts the runs; here you only tested the rule.
+#
+# ## 4 · Stop bad data with a blocking check (6')
+#
+# Phones retry when the signal drops, so the raw events hold duplicates. A loader that copies them straight through puts wrong
+# numbers on the operations board. Here's that loader, and a KPI asset that reads it:
 
 # %%
-@dg.asset(key=["ops", "delivery_events_daily"], partitions_def=DAYS, group_name="ops", deps=[raw_delivery_events])
-def delivery_events_daily(context: dg.AssetExecutionContext):
-    day = context.partition_key
+LOAD_SQL = """SELECT event_id, order_id, store_id, event_type, ingest_time FROM raw.delivery_events"""
+
+
+@dg.asset(key=["ops", "delivery_events"], group_name="ops", deps=[raw_delivery_events])
+def ops_delivery_events():
+    sql(f"CREATE OR REPLACE TABLE ops.delivery_events AS {LOAD_SQL}")
+
+
+@dg.asset(key=["ops", "delivered_per_store"], group_name="ops", deps=[ops_delivery_events])
+def ops_delivered_per_store():
+    sql("""CREATE OR REPLACE TABLE ops.delivered_per_store AS
+           SELECT store_id, count(*) AS delivered FROM ops.delivery_events WHERE event_type = 'delivered' GROUP BY ALL""")
+
+# %% [markdown]
+# An **asset check** looks at an asset right after it's built and returns pass or fail. If it's **blocking** and fails, nothing
+# downstream runs.
+#
+# ✏️ **Exercise** · Write the query for the check: rows minus distinct `event_id`s in `ops.delivery_events`. Zero means no duplicates.
+#
+# *Hint:* `SELECT count(*) - count(DISTINCT event_id) FROM ...`
+
+# %%
+def duplicates_sql():
     # BEGIN SOLUTION
-    sql("DELETE FROM ops.delivery_events_daily WHERE day = $day", {"day": day})
-    sql(f"INSERT INTO ops.delivery_events_daily {LOAD_SQL}", {"day": day})
-    rows = sql("SELECT count(*) FROM ops.delivery_events_daily WHERE day = $day", {"day": day})[0][0]
-    return dg.MaterializeResult(metadata={"rows": rows})
+    return "SELECT count(*) - count(DISTINCT event_id) FROM ops.delivery_events"
     # END SOLUTION
 
-@dg.asset(key=["ops", "daily_delivery_kpis"], partitions_def=DAYS, group_name="ops", deps=[delivery_events_daily])
-def daily_delivery_kpis(context: dg.AssetExecutionContext):
-    """Per store and day: orders delivered (counted from events)."""
-    day = context.partition_key
-    sql("CREATE TABLE IF NOT EXISTS ops.daily_delivery_kpis (day DATE, store_id VARCHAR, delivered BIGINT)")
-    sql("DELETE FROM ops.daily_delivery_kpis WHERE day = $day", {"day": day})
-    sql("""INSERT INTO ops.daily_delivery_kpis
-           SELECT day, store_id, count(*) FROM ops.delivery_events_daily
-           WHERE day = $day AND event_type = 'delivered' GROUP BY ALL""", {"day": day})
-
-def backfill(assets, keys, checks=()):
-    """Run one partition at a time, like a backfill with concurrency 1. Returns {partition: success}."""
-    instance = dg.DagsterInstance.ephemeral()
-    return {k: dg.materialize(list(assets) + list(checks), partition_key=k, instance=instance, run_config=QUIET,
-                              raise_on_error=False).success for k in keys}
-
-print(backfill([delivery_events_daily, daily_delivery_kpis], DAYS.get_partition_keys()))
-before = sql("SELECT count(*) FROM ops.delivery_events_daily")[0][0]
-backfill([delivery_events_daily, daily_delivery_kpis], ["2026-09-27"])          # re-run one day
-after = sql("SELECT count(*) FROM ops.delivery_events_daily")[0][0]
-print(f"rows after backfill: {before:,} | after re-running Sep 27: {after:,}")
-
 # %%
-U.check(before == after == 22_518, "every event loaded once; re-running a day changed nothing")
+try:
+    DUPES_SQL = duplicates_sql()
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    DUPES_SQL = "SELECT count(*) - count(DISTINCT event_id) FROM ops.delivery_events"
 
-# %% [markdown]
-# ## 4 · A blocking asset check catches bad data (5')
-#
-# An **asset check** runs right after its asset. If it's **blocking** and fails, downstream assets in the same run are
-# skipped, so bad data doesn't spread into KPIs.
-#
-# ✏️ **Exercise** · (a) Write `no_duplicate_events`, a blocking check on `delivery_events_daily`: for the run's partition,
-# count rows minus distinct `event_id`s; pass only if it's 0, with the count as metadata. Run a backfill **with the check**
-# and look at what happens to `daily_delivery_kpis`. (b) Fix the load: redefine `LOAD_SQL` so it keeps one row per
-# `event_id` (DuckDB: `QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY ingest_time) = 1`) and backfill again.
 
-# %%
-# BEGIN SOLUTION
-@dg.asset_check(asset=delivery_events_daily, blocking=True, description="Phones retry: every event_id must appear once")
-def no_duplicate_events(context: dg.AssetCheckExecutionContext):
-    day = context.run.tags["dagster/partition"]
-    dupes = sql("SELECT count(*) - count(DISTINCT event_id) FROM ops.delivery_events_daily WHERE day = $day", {"day": day})[0][0]
+@dg.asset_check(asset=ops_delivery_events, blocking=True, description="Phones retry: each event_id must appear once")
+def no_duplicate_events():
+    dupes = sql(DUPES_SQL)[0][0]
     return dg.AssetCheckResult(passed=dupes == 0, metadata={"duplicates": dupes})
-# END SOLUTION
 
-first = backfill([delivery_events_daily, daily_delivery_kpis], DAYS.get_partition_keys(), checks=[no_duplicate_events])
-print("runs succeeded:", first)
-print("duplicates per day:", dict(sql("SELECT day::VARCHAR, count(*) - count(DISTINCT event_id) FROM ops.delivery_events_daily GROUP BY 1 ORDER BY 1")))
 
-# BEGIN SOLUTION
-LOAD_SQL = f"""
-    SELECT ingest_time[:10]::DATE AS day, event_id, order_id, store_id, event_type, ingest_time
-    FROM raw.delivery_events
-    WHERE ingest_time[:10] = $day
-    QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY ingest_time) = 1
-"""
-# END SOLUTION
-second = backfill([delivery_events_daily, daily_delivery_kpis], DAYS.get_partition_keys(), checks=[no_duplicate_events])
-print("after the fix:", second)
-
-# %%
-U.check(not all(first.values()), "the blocking check failed runs that loaded duplicates")
-U.check(all(second.values()), "after the fix, every partition passes")
-U.check(sql("SELECT count(*) - count(DISTINCT event_id) FROM ops.delivery_events_daily")[0][0] == 0, "no duplicates left")
+OPS = [raw_delivery_events, ops_delivery_events, ops_delivered_per_store, no_duplicate_events]
+first = dg.materialize(OPS, run_config=QUIET, raise_on_error=False)
+built = sorted(ev.event_specific_data.materialization.asset_key.to_user_string() for ev in first.get_asset_materialization_events())
+meta = first.get_asset_check_evaluations()[0].metadata["duplicates"].value
+print(f"run succeeded: {first.success} | duplicates found: {meta} (expected 312) | built: {built}")
+U.check(not first.success and "ops/delivered_per_store" not in built, "the blocking check stopped the KPI from being built")
+V.asset_run(OPS, first)
 
 # %% [markdown]
-# 🔍 Your dbt tests from Day 2 already run as asset checks (Task 2). Asset checks are the place for the things dbt can't
-# see: files before they're loaded, API responses, row counts against yesterday. Freshness and volume monitors (Lab 4.2)
-# plug in here too.
-#
-# ## 5 · Schedules and sensors (3')
-#
-# **Schedules** start runs on a clock; **sensors** start runs when something happens (a file lands, an upstream asset
-# updates). Both can be tested without waiting for real time.
+# 🔍 The KPI asset was **skipped**, so the board keeps yesterday's number instead of a wrong one. Now fix the loader, keeping one
+# row per `event_id`, and run again.
 
 # %%
-daily_job = dg.define_asset_job("daily_ops", selection=[delivery_events_daily, daily_delivery_kpis], partitions_def=DAYS)
-nightly = dg.build_schedule_from_partitioned_job(daily_job, hour_of_day=1, minute_of_hour=30)   # 01:30 UTC
-tick = nightly.evaluate_tick(dg.build_schedule_context(scheduled_execution_time=datetime(2026, 9, 28, 1, 30)))
-print("schedule at 2026-09-28 01:30 requests partition:", [r.partition_key for r in tick.run_requests])
+LOAD_SQL = """SELECT event_id, order_id, store_id, event_type, ingest_time FROM raw.delivery_events
+              QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY ingest_time) = 1"""
+second = dg.materialize(OPS, run_config=QUIET, raise_on_error=False)
+print("after the fix, run succeeded:", second.success, "|", sql("SELECT sum(delivered) FROM ops.delivered_per_store")[0][0], "delivered events")
+U.check(second.success, "the check passes and the KPI is built")
 
 # %% [markdown]
-# ✏️ **Exercise** · Write a sensor `supplier_files` for `supplier_job` (given) that yields one
-# `dg.RunRequest(run_key=<file name>)` per CSV in `U.RAW / "suppliers"`. The `run_key` makes it idempotent: Dagster
-# never launches two runs with the same key, so a file is processed once even though the sensor sees it on every tick.
+# ## 5 · Add a volume check (5')
+#
+# Tests catch what you can describe in advance. A **volume check** catches what you can't: today has far fewer rows than usual.
+# (A **freshness** check is its twin: the newest row is older than it should be.) Orders swing by weekday, so compare each day
+# with the same weekday in the weeks before it, not with yesterday.
+#
+# We simulate an incident: on 29 September a load job silently keeps only 40% of the day's orders, and still reports success.
 
 # %%
-@dg.asset(group_name="ingest")
-def supplier_prices_landed():
-    """Placeholder for the supplier-file loader (Day 1's quarantine logic would live here)."""
+@dg.asset(key=["ops", "orders_per_day"], group_name="ops", deps=[dg.AssetKey(["marts", "fct_orders"])])
+def ops_orders_per_day():
+    sql("""CREATE OR REPLACE TABLE ops.orders_per_day AS
+           WITH d AS (SELECT created_at[:10]::DATE AS order_date, count(*)::DOUBLE AS orders FROM raw.orders
+                      WHERE NOT (created_at[:10] = '2026-09-29' AND order_id % 10 >= 4)      -- the simulated bad load
+                      GROUP BY 1)
+           SELECT order_date, orders,
+                  (SELECT median(orders) FROM d b WHERE b.order_date < d.order_date AND b.order_date >= d.order_date - 28
+                     AND dayofweek(b.order_date) = dayofweek(d.order_date)) AS usual
+           FROM d ORDER BY order_date""")
 
-supplier_job = dg.define_asset_job("supplier_job", selection=[supplier_prices_landed])
-
-# BEGIN SOLUTION
-@dg.sensor(job=supplier_job, minimum_interval_seconds=60)
-def supplier_files(context: dg.SensorEvaluationContext):
-    for f in sorted((U.RAW / "suppliers").glob("*.csv")):
-        yield dg.RunRequest(run_key=f.name, tags={"file": f.name})
-# END SOLUTION
-
-requests = list(supplier_files(dg.build_sensor_context()))
-print([r.run_key for r in requests])
-U.check(len(requests) == 4 and len({r.run_key for r in requests}) == 4, "one run per supplier file, keyed by file name")
-
-full = dg.Definitions(assets=[raw_delivery_events, raw_reviews, qafila_dbt, delivery_events_daily, daily_delivery_kpis,
-                              supplier_prices_landed],
-                      asset_checks=[no_duplicate_events], jobs=[daily_job, supplier_job], schedules=[nightly],
-                      sensors=[supplier_files], resources={"dbt": dbt})
-print(len(full.resolve_asset_graph().get_all_asset_keys()), "assets in the Qafila code location")
 
 # %% [markdown]
-# 🔍 In production this `Definitions` object lives in a Python package; `dagster dev` serves the UI (lineage graph, runs,
-# backfills) and a daemon runs schedules and sensors. Try it on your laptop for the capstone: `labs/capstone/` has one.
+# ✏️ **Exercise** · Complete the rule: a day is **odd** if it has a `usual` value and its `orders` are more than 30% away from it,
+# in either direction. Return the `WHERE` condition.
 #
-# ## ✱ Stretch · Retries against a flaky API
-#
-# The payments API rate-limits (HTTP 429). Give an asset a `dg.RetryPolicy(max_retries=3, delay=1)` and watch Dagster
-# retry it. The API below answers every 2nd request with 429 and is primed so the **first** call fails; fetch one page
-# with `urllib.request.urlopen(f"{api.base_url}/payments?updated_since=2026-09-01T00:00:00Z")`.
+# *Hint:* `usual IS NOT NULL AND abs(orders - usual) > ...`
 
 # %%
-# BEGIN SOLUTION
-import json
-import urllib.request
+def odd_day_condition():
+    # BEGIN SOLUTION
+    return "usual IS NOT NULL AND abs(orders - usual) > 0.3 * usual"
+    # END SOLUTION
 
-api = U.PaymentsAPI(page_size=500, rate_limit_every=2)
-api.start()
-api.requests = 1          # primed: the next request is the 2nd, so it gets a 429
-attempts = []
+# %%
+try:
+    ODD_WHERE = odd_day_condition()
+except NotImplementedError:
+    print("⚠️ Not done yet: using the reference answer so the rest of the lab runs.")
+    ODD_WHERE = "usual IS NOT NULL AND abs(orders - usual) > 0.3 * usual"
 
-@dg.asset(retry_policy=dg.RetryPolicy(max_retries=3, delay=1))
-def payments_page():
-    attempts.append(datetime.now().strftime("%H:%M:%S"))
-    with urllib.request.urlopen(f"{api.base_url}/payments?updated_since=2026-09-01T00:00:00Z") as r:   # 429 raises HTTPError
-        page = json.load(r)
-    return dg.MaterializeResult(metadata={"rows": len(page["data"])})
 
-r = dg.materialize([payments_page], run_config=QUIET, raise_on_error=False)
-api.stop()
-print("success:", r.success, "| attempts:", attempts)
-# END SOLUTION
+@dg.asset_check(asset=ops_orders_per_day, description="Volume: no day more than 30% away from its usual weekday")
+def orders_volume():
+    odd = sql(f"SELECT order_date::VARCHAR, orders, usual FROM ops.orders_per_day WHERE {ODD_WHERE} ORDER BY 1")
+    return dg.AssetCheckResult(passed=not odd, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"odd_days": ", ".join(f"{d}: {n:.0f} vs. {u:.1f} usual" for d, n, u in odd) or "none"})
+
+
+vol = dg.materialize([ops_orders_per_day, orders_volume], run_config=QUIET, raise_on_error=False)
+c = vol.get_asset_check_evaluations()[0]
+odd_days = c.metadata["odd_days"].value
+print(f"run succeeded: {vol.success} | check passed: {c.passed} | odd days: {odd_days}")
+print("expected: two days, 23 Sep and 29 Sep")
+U.check(vol.success and not c.passed and "2026-09-29" in odd_days, "a warning, not a stop: the run succeeded and the alert is on record")
+
+# %% [markdown]
+# 🔍 Two alerts in two months. 23 September is National Day: a real spike, on the calendar. 29 September is the incident. That's
+# why this check only **warns**: an odd day may be real, and someone should look. The duplicate check **blocks** because the number
+# would be wrong. Now the whole thing, in one object: what a production
+# deployment would load.
+
+# %%
+everything = [raw_delivery_events, raw_reviews, qafila_dbt, ops_delivery_events, ops_delivered_per_store, ops_orders_per_day]
+defs = dg.Definitions(assets=everything, asset_checks=[no_duplicate_events, orders_volume], schedules=[nightly], resources={"dbt": dbt})
+print(len(defs.resolve_asset_graph().get_all_asset_keys()), "assets, 1 schedule, 2 checks of your own plus the dbt tests")
+V.asset_run(everything + [no_duplicate_events, orders_volume])
+
+# %% [markdown]
+# ## ✱ Stretch · Retry a flaky API
+#
+# The payments API answers some requests with HTTP 429, "too many requests". Give an asset `dg.RetryPolicy(max_retries=3, delay=1)`
+# and watch Dagster retry it. The API below answers every 2nd request with 429 and is primed so your **first** call fails.
+
+# %%
+def stretch():
+    # BEGIN SOLUTION
+    import json
+    import urllib.request
+
+    api = U.PaymentsAPI(page_size=500, rate_limit_every=2)
+    api.start()
+    api.requests = 1          # primed: the next request is the 2nd, so it gets a 429
+    attempts = []
+
+
+    @dg.asset(retry_policy=dg.RetryPolicy(max_retries=3, delay=1))
+    def payments_page():
+        attempts.append(datetime.now().strftime("%H:%M:%S"))
+        with urllib.request.urlopen(f"{api.base_url}/payments?updated_since=2026-09-01T00:00:00Z") as r:   # 429 raises HTTPError
+            page = json.load(r)
+        return dg.MaterializeResult(metadata={"rows": len(page["data"])})
+
+
+    r = dg.materialize([payments_page], run_config=QUIET, raise_on_error=False)
+    api.stop()
+    print("success:", r.success, "| attempts:", len(attempts))
+    # END SOLUTION
+
+
+try:
+    stretch()
+except NotImplementedError:
+    print("✱ Optional: write stretch() above if you have time.")
 
 # %% [markdown]
 # ## Checkpoint
 #
-# 1. Task-based (Airflow 2 style) vs asset-based (Dagster, Airflow 3 assets): what does the orchestrator know in each case?
-# 2. Why must a partitioned asset be idempotent? What would happen in a backfill otherwise?
-# 3. When should a check be **blocking**, and when should it only warn?
-# 4. Schedule or sensor: how would you trigger the supplier price load, and why?
+# 1. A task-based script and an asset graph both run steps in order. What does the asset graph know that the script doesn't?
+# 2. When should a check block, and when should it only warn?
+# 3. Why compare today's volume with the same weekday rather than with yesterday?
+#
+# <details><summary>Answers</summary>
+#
+# 1. What each step produces and what it's built from. So it can rebuild only what's affected, and show when each table was last built and whether its checks passed.
+# 2. Block when a wrong number downstream costs more than a late one (duplicates, an empty load). Warn when a person should look but the data is still useful.
+# 3. Orders follow a weekly rhythm, so every weekend would look like an incident compared with the day before.
+#
+# </details>
+#
+# ## Carry forward
+#
+# You now have what the capstone's pipeline needs: assets, dbt in the graph, a schedule and checks. `labs/capstone/pipeline.py` is the
+# same pattern at full size. It also runs `dagster dev`, the web interface for this graph.
+#
+# Want more? `tools/dagster.ipynb`.
