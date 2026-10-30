@@ -7802,11 +7802,12 @@ a.anchor-link {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="Polars,-one-idea-at-a-time">Polars, one idea at a time<a class="anchor-link" href="#Polars,-one-idea-at-a-time">¶</a></h1><p>Day 2, before Lab 2.1 · CPU only. Operations asks how many couriers delivered in each city. You answer with a
-Python loop and watch it slow down, then build Polars, the DataFrame library Lab 2.1 cleans bronze into silver
+<h1 id="Polars,-one-idea-at-a-time">Polars, one idea at a time<a class="anchor-link" href="#Polars,-one-idea-at-a-time">¶</a></h1><p>Optional, self-paced: goes deeper than Session 2.4.</p>
+<p>CPU only. Operations asks how many couriers delivered in each city. You answer with a
+Python loop and watch it slow down, then build Polars, the DataFrame library Lab 2.4 cleans bronze into silver
 with, one idea at a time.</p>
 <p><strong>The data:</strong> Qafila's own: a 12-row stores table you can check by eye, then the 45,766 orders of the app database
-and the courier feed. Lab 2.1 cleans the messy parts (timestamps, duplicates, customers).</p>
+and the courier feed. Lab 2.4 cleans the messy parts (timestamps, duplicates, time zones).</p>
 <p>🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.</p>
 <p><strong>Contents</strong></p>
 <ul>
@@ -7911,7 +7912,7 @@ columns with <strong>expressions</strong> instead of <code>df[...]</code>. §4 i
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>Polars <strong>transforms</strong> bronze into silver (Lab 2.1) and <strong>tests</strong> DataFrames on the way (Lab 2.4). It does in Python,
+<p>Polars <strong>transforms</strong> bronze into silver (Lab 2.4) and <strong>tests</strong> DataFrames on the way (Lab 3.3). It does in Python,
 with a DataFrame API, what DuckDB does with SQL.</p>
 </div>
 </div>
@@ -7938,33 +7939,33 @@ with a DataFrame API, what DuckDB does with SQL.</p>
 <div class="jp-OutputArea-child jp-OutputArea-executeResult">
 <div class="jp-OutputPrompt jp-OutputArea-prompt">Out[3]:</div>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output jp-OutputArea-executeResult" data-mime-type="text/html" tabindex="0">
-<div id="pm-d24a2902b3"><style>
-#pm-d24a2902b3 {font-family: system-ui, sans-serif; color: #101820; background: #fff; border: 1px solid #e4e1d8;
+<div id="pm-ec5058d0cb"><style>
+#pm-ec5058d0cb {font-family: system-ui, sans-serif; color: #101820; background: #fff; border: 1px solid #e4e1d8;
      border-radius: 8px; padding: 12px 14px; max-width: 100%; overflow-x: auto; color-scheme: light}
-#pm-d24a2902b3 .pm-here {font-size: 13.5px; margin: 0 0 10px}
-#pm-d24a2902b3 .pm-g {display: grid; grid-template-columns: repeat(6, minmax(118px, 1fr)); gap: 5px; min-width: 760px;
+#pm-ec5058d0cb .pm-here {font-size: 13.5px; margin: 0 0 10px}
+#pm-ec5058d0cb .pm-g {display: grid; grid-template-columns: repeat(6, minmax(118px, 1fr)); gap: 5px; min-width: 760px;
            position: relative}
-#pm-d24a2902b3 .pm-col {border-radius: 6px; background: rgba(28,53,94,0.07); z-index: 0}
-#pm-d24a2902b3 .pm-h {z-index: 1; font-weight: bold; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em;
+#pm-ec5058d0cb .pm-col {border-radius: 6px; background: rgba(28,53,94,0.07); z-index: 0}
+#pm-ec5058d0cb .pm-h {z-index: 1; font-weight: bold; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em;
            color: #5b6472; padding: 6px 18px 6px 10px; background: #f4f2ec;
            clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%)}
-#pm-d24a2902b3 .pm-h:first-child {clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)}
-#pm-d24a2902b3 .pm-h.on {background: #1c355e; color: #fff}
-#pm-d24a2902b3 .pm-t, #pm-d24a2902b3 .pm-s, #pm-d24a2902b3 .pm-b {z-index: 1; border: 1px solid #b9b5aa; border-radius: 6px;
+#pm-ec5058d0cb .pm-h:first-child {clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)}
+#pm-ec5058d0cb .pm-h.on {background: #1c355e; color: #fff}
+#pm-ec5058d0cb .pm-t, #pm-ec5058d0cb .pm-s, #pm-ec5058d0cb .pm-b {z-index: 1; border: 1px solid #b9b5aa; border-radius: 6px;
            background: #fff; padding: 4px 8px; font-size: 12px; line-height: 1.3}
-#pm-d24a2902b3 .pm-t b, #pm-d24a2902b3 .pm-b b {font-size: 12.5px}
-#pm-d24a2902b3 .pm-t small, #pm-d24a2902b3 .pm-s small, #pm-d24a2902b3 .pm-b small {display: block; color: #5b6472; font-size: 11px}
-#pm-d24a2902b3 .pm-t i, #pm-d24a2902b3 .pm-b i {float: right; font-style: normal; font-size: 10.5px; color: #5b6472;
+#pm-ec5058d0cb .pm-t b, #pm-ec5058d0cb .pm-b b {font-size: 12.5px}
+#pm-ec5058d0cb .pm-t small, #pm-ec5058d0cb .pm-s small, #pm-ec5058d0cb .pm-b small {display: block; color: #5b6472; font-size: 11px}
+#pm-ec5058d0cb .pm-t i, #pm-ec5058d0cb .pm-b i {float: right; font-style: normal; font-size: 10.5px; color: #5b6472;
            font-variant-numeric: tabular-nums; margin-left: 6px}
-#pm-d24a2902b3 .pm-s {border-style: dashed}
-#pm-d24a2902b3 .pm-b {background: #f9f8f4}
-#pm-d24a2902b3 .pm-b b {display: inline-block; min-width: 92px}
-#pm-d24a2902b3 .pm-b small {display: inline}
-#pm-d24a2902b3 .on.pm-t, #pm-d24a2902b3 .on.pm-b {background: #1c355e; border-color: #1c355e; color: #fff}
-#pm-d24a2902b3 .on.pm-t small, #pm-d24a2902b3 .on.pm-t i, #pm-d24a2902b3 .on.pm-b small, #pm-d24a2902b3 .on.pm-b i {color: #dfe5ef}
-#pm-d24a2902b3 .on.pm-t b::before, #pm-d24a2902b3 .on.pm-b b::before {content: "▸ "}
-#pm-d24a2902b3 .dim {opacity: .4}
-</style><div class="pm-here"><b>You are here:</b> Polars · transform → test</div><div class="pm-g"><div class="pm-col" style="grid-column:4;grid-row:1/8"></div><div class="pm-col" style="grid-column:5;grid-row:1/8"></div><div class="pm-h" style="grid-column:1;grid-row:1">sources</div><div class="pm-h" style="grid-column:2;grid-row:1">ingest</div><div class="pm-h" style="grid-column:3;grid-row:1">store</div><div class="pm-h on" style="grid-column:4;grid-row:1">transform</div><div class="pm-h on" style="grid-column:5;grid-row:1">test</div><div class="pm-h" style="grid-column:6;grid-row:1">serve</div><div class="pm-t dim" style="grid-column:2/3;grid-row:2"><i>D1_3</i><b>dlt</b><small>incremental loads, schema drift</small></div><div class="pm-t" style="grid-column:3/7;grid-row:2"><i>D1_1</i><b>DuckDB</b><small>the SQL engine in every lab</small></div><div class="pm-t dim" style="grid-column:2/3;grid-row:3"><i>D1_4</i><b>CDC + MERGE</b><small>changes, deletes, SCD2</small></div><div class="pm-t dim" style="grid-column:3/4;grid-row:3"><i>D1_2</i><b>Parquet</b><small>columnar files</small></div><div class="pm-t on" style="grid-column:4/6;grid-row:3"><i>D2_1</i><b>Polars</b><small>DataFrames, lazy plans, checks</small></div><div class="pm-t dim" style="grid-column:6/7;grid-row:3"><i>D4_4</i><b>Semantic layer</b><small>metrics defined once</small></div><div class="pm-t dim" style="grid-column:2/3;grid-row:4"><i>D3_3 · D3_4</i><b>Streaming</b><small>events as they happen</small></div><div class="pm-t dim" style="grid-column:3/4;grid-row:4"><i>D3_1</i><b>Iceberg</b><small>tables on files, time travel</small></div><div class="pm-t" style="grid-column:4/6;grid-row:4"><i>D2_2 · D2_3</i><b>dbt</b><small>models, tests, docs, lineage</small></div><div class="pm-t dim" style="grid-column:6/7;grid-row:4"><i>D4_4</i><b>Embeddings</b><small>search, text-to-SQL</small></div><div class="pm-t" style="grid-column:4/5;grid-row:5"><i>D3_2</i><b>Spark</b><small>the same work on a cluster</small></div><div class="pm-t" style="grid-column:5/6;grid-row:5"><i>D2_4</i><b>Pandera</b><small>schemas for DataFrames</small></div><div class="pm-t" style="grid-column:5/6;grid-row:6"><i>D4_2</i><b>Contracts</b><small>ODCS: what consumers rely on</small></div><div class="pm-s dim" style="grid-column:1;grid-row:2"><b>App database</b><small>qafila_oltp.sqlite</small></div><div class="pm-s dim" style="grid-column:1;grid-row:3"><b>Payments API</b><small>pages, cursor, 429s</small></div><div class="pm-s dim" style="grid-column:1;grid-row:4"><b>CDC feed</b><small>inserts, updates, deletes</small></div><div class="pm-s dim" style="grid-column:1;grid-row:5"><b>Click events</b><small>a stream</small></div><div class="pm-s dim" style="grid-column:1;grid-row:6"><b>Supplier files</b><small>weekly CSVs</small></div><div class="pm-s dim" style="grid-column:1;grid-row:7"><b>Reviews</b><small>free text</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:8"><i>D4_1</i><b>Orchestrate</b> <small>Dagster: assets, schedules, checks</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:9"><i>D4_2</i><b>Observe</b> <small>freshness, volume, schema, distribution, lineage</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:10"><i>D4_3</i><b>Govern</b> <small>PDPL, masking, access</small></div></div></div>
+#pm-ec5058d0cb .pm-s {border-style: dashed}
+#pm-ec5058d0cb .pm-b {background: #f9f8f4}
+#pm-ec5058d0cb .pm-b b {display: inline-block; min-width: 92px}
+#pm-ec5058d0cb .pm-b small {display: inline}
+#pm-ec5058d0cb .on.pm-t, #pm-ec5058d0cb .on.pm-b {background: #1c355e; border-color: #1c355e; color: #fff}
+#pm-ec5058d0cb .on.pm-t small, #pm-ec5058d0cb .on.pm-t i, #pm-ec5058d0cb .on.pm-b small, #pm-ec5058d0cb .on.pm-b i {color: #dfe5ef}
+#pm-ec5058d0cb .on.pm-t b::before, #pm-ec5058d0cb .on.pm-b b::before {content: "▸ "}
+#pm-ec5058d0cb .dim {opacity: .4}
+</style><div class="pm-here"><b>You are here:</b> Polars · transform → test</div><div class="pm-g"><div class="pm-col" style="grid-column:4;grid-row:1/8"></div><div class="pm-col" style="grid-column:5;grid-row:1/8"></div><div class="pm-h" style="grid-column:1;grid-row:1">sources</div><div class="pm-h" style="grid-column:2;grid-row:1">ingest</div><div class="pm-h" style="grid-column:3;grid-row:1">store</div><div class="pm-h on" style="grid-column:4;grid-row:1">transform</div><div class="pm-h on" style="grid-column:5;grid-row:1">test</div><div class="pm-h" style="grid-column:6;grid-row:1">serve</div><div class="pm-t dim" style="grid-column:2/3;grid-row:2"><i>D2_2</i><b>dlt</b><small>incremental loads, schema drift</small></div><div class="pm-t" style="grid-column:3/7;grid-row:2"><i>D1_2</i><b>DuckDB</b><small>the SQL engine in every lab</small></div><div class="pm-t dim" style="grid-column:2/3;grid-row:3"><i>D2_3</i><b>CDC + MERGE</b><small>changes, deletes, SCD2</small></div><div class="pm-t dim" style="grid-column:3/4;grid-row:3"><i>D1_4</i><b>Parquet</b><small>columnar files</small></div><div class="pm-t on" style="grid-column:4/6;grid-row:3"><i>D2_4</i><b>Polars</b><small>DataFrames, cleaning, checks</small></div><div class="pm-t dim" style="grid-column:2/3;grid-row:4"><i>D4_3</i><b>Streaming</b><small>events as they happen</small></div><div class="pm-t dim" style="grid-column:3/4;grid-row:4"><i>D4_1</i><b>Iceberg</b><small>tables on files, time travel</small></div><div class="pm-t" style="grid-column:4/6;grid-row:4"><i>D3_2 · D3_3</i><b>dbt</b><small>models, tests, lineage</small></div><div class="pm-t" style="grid-column:4/5;grid-row:5"><i>D4_2</i><b>Spark</b><small>the same work on a cluster</small></div><div class="pm-t" style="grid-column:5/6;grid-row:5"><i>D3_3</i><b>Pandera</b><small>schemas for DataFrames</small></div><div class="pm-s dim" style="grid-column:1;grid-row:2"><b>App database</b><small>qafila_oltp.sqlite</small></div><div class="pm-s dim" style="grid-column:1;grid-row:3"><b>Payments API</b><small>pages, cursor, 429s</small></div><div class="pm-s dim" style="grid-column:1;grid-row:4"><b>CDC feed</b><small>inserts, updates, deletes</small></div><div class="pm-s dim" style="grid-column:1;grid-row:5"><b>Click events</b><small>a stream</small></div><div class="pm-s dim" style="grid-column:1;grid-row:6"><b>Supplier files</b><small>weekly CSVs</small></div><div class="pm-s dim" style="grid-column:1;grid-row:7"><b>Reviews</b><small>free text</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:8"><i>D3_4</i><b>Orchestrate</b> <small>Dagster: assets, schedules, checks</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:9"><i>D3_4</i><b>Observe</b> <small>freshness and volume checks, lineage</small></div><div class="pm-b dim" style="grid-column:2/-1;grid-row:10"><i>D4_4</i><b>Govern</b> <small>PDPL, masking, access</small></div></div></div>
 </div>
 </div>
 </div>
@@ -8021,7 +8022,7 @@ feed, one JSON object per line. To see how a plain Python loop grows with the da
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>a Python loop                   5461.8 ms
+<pre>a Python loop                   7475.6 ms
 900,720 events read → {'Dammam': 30, 'Jeddah': 60, 'Riyadh': 90}
 </pre>
 </div>
@@ -8071,10 +8072,10 @@ feed, one JSON object per line. To see how a plain Python loop grows with the da
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>Polars                           373.8 ms
+<pre>Polars                           226.2 ms
 [('Dammam', 30), ('Jeddah', 60), ('Riyadh', 90)]
 ✅ the same answer as the loop
-Polars was 15× faster
+Polars was 33× faster
 </pre>
 </div>
 </div>
@@ -8926,7 +8927,7 @@ Put each comparison in parentheses:</p>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p>🔍 Finding bad rows is easy; deciding what to do with them (drop, fix, quarantine, ask the source team) is a data
-engineering decision. Lab 2.4 builds a quarantine for exactly this.</p>
+engineering decision. Lab 3.3 builds a quarantine for exactly this.</p>
 <h2 id="6-%C2%B7-with_columns:-add-and-fix-columns">6 · <code>with_columns</code>: add and fix columns<a class="anchor-link" href="#6-%C2%B7-with_columns:-add-and-fix-columns">¶</a></h2><p><code>with_columns</code> keeps <strong>every</strong> column and adds yours; an expression whose name already exists <strong>replaces</strong> that
 column. That makes it the tool for fixing types. <code>.str.to_datetime()</code> parses text into a datetime:</p>
 </div>
@@ -9250,7 +9251,7 @@ Riyadh time, three hours ahead. Say the text is UTC, then convert. The rest of t
   white-space: pre-wrap;
 }
 </style>
-<small>shape: (4, 3)</small><table border="1" class="dataframe"><thead><tr><th>status</th><th>orders</th><th>avg_fee</th></tr><tr><td>str</td><td>u32</td><td>f64</td></tr></thead><tbody><tr><td>"delivered"</td><td>40419</td><td>8.64</td></tr><tr><td>"refunded"</td><td>964</td><td>8.72</td></tr><tr><td>"cancelled"</td><td>3266</td><td>8.63</td></tr><tr><td>"failed_delivery"</td><td>1117</td><td>8.65</td></tr></tbody></table></div>
+<small>shape: (4, 3)</small><table border="1" class="dataframe"><thead><tr><th>status</th><th>orders</th><th>avg_fee</th></tr><tr><td>str</td><td>u32</td><td>f64</td></tr></thead><tbody><tr><td>"delivered"</td><td>40419</td><td>8.64</td></tr><tr><td>"cancelled"</td><td>3266</td><td>8.63</td></tr><tr><td>"failed_delivery"</td><td>1117</td><td>8.65</td></tr><tr><td>"refunded"</td><td>964</td><td>8.72</td></tr></tbody></table></div>
 </div>
 </div>
 </div>
@@ -9773,13 +9774,7 @@ and min/max statistics per block of rows let the filter skip whole blocks.</p>
       PROJECT 3/10 COLUMNS
       SELECTION: col("event_type") == "delivered"
       ESTIMATED ROWS: 22518
-</pre>
-</div>
-</div>
-<div class="jp-OutputArea-child">
-<div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>✅ same answer from the Parquet copy
+✅ same answer from the Parquet copy
 </pre>
 </div>
 </div>
@@ -9854,7 +9849,7 @@ an aggregation and a derived column.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>The same question in <strong>SQL</strong>, with DuckDB, straight on the app database. Lab 2.1 makes this comparison too.</p>
+<p>The same question in <strong>SQL</strong>, with DuckDB, straight on the app database. Lab 2.4 makes this comparison too.</p>
 </div>
 </div>
 </div>
@@ -9931,11 +9926,11 @@ Because §6 converted <code>created_at</code> to Riyadh time, <code>.dt.month()<
 </tr>
 <tr>
 <td><strong>It doesn't</strong></td>
-<td>store tables or run SQL for other users (that's a database: DuckDB, a warehouse) · scale past one machine (Spark, Day 3) · decide your cleaning rules · schedule, ingest or test by itself (Dagster, dlt, Pandera)</td>
+<td>store tables or run SQL for other users (that's a database: DuckDB, a warehouse) · scale past one machine (Spark, Session 4.2) · decide your cleaning rules · schedule, ingest or test by itself (Dagster, dlt, Pandera)</td>
 </tr>
 <tr>
 <td><strong>In this course</strong></td>
-<td>bronze → silver cleaning (Lab 2.1) · Pandera checks on DataFrames (Lab 2.4) · reading an Iceberg table (<code>pl.scan_iceberg</code>, Lab 3.1)</td>
+<td>bronze → silver cleaning (Lab 2.4) · Pandera checks on DataFrames (Lab 3.3) · reading an Iceberg table (<code>pl.scan_iceberg</code>, Lab 4.1)</td>
 </tr>
 <tr>
 <td><strong>As a service</strong></td>
@@ -9944,7 +9939,7 @@ Because §6 converted <code>created_at</code> to Riyadh time, <code>.dt.month()<
 </tbody>
 </table>
 <p><strong>Which engine?</strong> It follows the workload, not a gigabyte threshold. On one machine, Polars and DuckDB give the same
-answer (Lab 2.1 checks it), so the choice is mostly the language your team writes. A larger dataset doesn't by
+answer (Lab 2.4 checks it), so the choice is mostly the language your team writes. A larger dataset doesn't by
 itself need a cluster: measure memory, disk spill and the plan first.</p>
 <p><strong>Cheat sheet</strong></p>
 <table>
@@ -10036,8 +10031,8 @@ itself need a cluster: measure memory, disk spill and the plan first.</p>
 <li>Which join finds the orders whose customer was erased, and why would an inner join hide them?</li>
 <li>What does <code>.explain()</code> show that <code>.collect()</code> doesn't, and what are projection and predicate pushdown?</li>
 </ol>
-<p>Next: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_1_bronze_to_silver.ipynb">Lab 2.1 · Bronze to silver</a>. It parses three timestamp formats with <code>.str</code> and
-<code>.dt</code>, keeps one copy per event with <code>unique</code>, and writes silver Parquet with <code>sink_parquet</code>. Docs:
+<p>Next: <a href="https://colab.research.google.com/github/SDAIAAcademy/data-engineering/blob/main/labs/D2_4_bronze_to_silver.ipynb">Lab 2.4 · Bronze to silver</a>. It parses three timestamp formats with <code>.str</code> and
+<code>.dt</code>, keeps one copy per event with <code>unique</code>, and writes silver Parquet. Docs:
 <a href="https://docs.pola.rs/user-guide/">user guide</a> ·
 <a href="https://docs.pola.rs/user-guide/concepts/expressions-and-contexts/">expressions and contexts</a> ·
 <a href="https://docs.pola.rs/user-guide/lazy/">lazy API</a> ·

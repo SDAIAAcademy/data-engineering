@@ -1,12 +1,14 @@
 # %% [markdown]
 # # Polars, one idea at a time
 #
-# Day 2, before Lab 2.1 · CPU only. Operations asks how many couriers delivered in each city. You answer with a
-# Python loop and watch it slow down, then build Polars, the DataFrame library Lab 2.1 cleans bronze into silver
+# Optional, self-paced: goes deeper than Session 2.4.
+#
+# CPU only. Operations asks how many couriers delivered in each city. You answer with a
+# Python loop and watch it slow down, then build Polars, the DataFrame library Lab 2.4 cleans bronze into silver
 # with, one idea at a time.
 #
 # **The data:** Qafila's own: a 12-row stores table you can check by eye, then the 45,766 orders of the app database
-# and the courier feed. Lab 2.1 cleans the messy parts (timestamps, duplicates, customers).
+# and the courier feed. Lab 2.4 cleans the messy parts (timestamps, duplicates, time zones).
 #
 # 🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.
 #
@@ -36,7 +38,7 @@
 #   use `lines` from §4).
 # - §1 reads the courier feed 40 times (≈900k events): the loop takes several seconds, Polars well under one. The
 #   ratio is the point, not the numbers; quick mode reads it 10 times.
-# - Lab 2.1 parses three timestamp formats, picks one copy per `event_id` and cleans customers: don't teach those here.
+# - Lab 2.4 parses three timestamp formats, picks one copy per `event_id` and converts to Riyadh time: don't teach those here.
 #   §6's time zones and §10's plans are what it builds on.
 
 # %%
@@ -68,7 +70,7 @@ app = sqlite3.connect(U.RAW / "qafila_oltp.sqlite")       # Qafila's app databas
 print("polars", pl.__version__)
 
 # %% [markdown]
-# Polars **transforms** bronze into silver (Lab 2.1) and **tests** DataFrames on the way (Lab 2.4). It does in Python,
+# Polars **transforms** bronze into silver (Lab 2.4) and **tests** DataFrames on the way (Lab 3.3). It does in Python,
 # with a DataFrame API, what DuckDB does with SQL.
 
 # %%
@@ -299,7 +301,7 @@ bad_lines.head(3)
 
 # %% [markdown]
 # 🔍 Finding bad rows is easy; deciding what to do with them (drop, fix, quarantine, ask the source team) is a data
-# engineering decision. Lab 2.4 builds a quarantine for exactly this.
+# engineering decision. Lab 3.3 builds a quarantine for exactly this.
 #
 # ## 6 · `with_columns`: add and fix columns
 #
@@ -550,7 +552,7 @@ basket_by_city = (
 basket_by_city
 
 # %% [markdown]
-# The same question in **SQL**, with DuckDB, straight on the app database. Lab 2.1 makes this comparison too.
+# The same question in **SQL**, with DuckDB, straight on the app database. Lab 2.4 makes this comparison too.
 
 # %%
 import duckdb
@@ -584,12 +586,12 @@ U.check((basket_by_city["avg_basket"] - sql_answer["avg_basket"]).abs().max() < 
 # | | |
 # |---|---|
 # | **It does** | DataFrame transformations in Python, fast, on every core · lazy queries with a plan you can read · files in place (CSV, JSON lines, Parquet, Iceberg, databases) · larger-than-memory queries with the streaming engine (`.collect(engine="streaming")`, `sink_parquet`) |
-# | **It doesn't** | store tables or run SQL for other users (that's a database: DuckDB, a warehouse) · scale past one machine (Spark, Day 3) · decide your cleaning rules · schedule, ingest or test by itself (Dagster, dlt, Pandera) |
-# | **In this course** | bronze → silver cleaning (Lab 2.1) · Pandera checks on DataFrames (Lab 2.4) · reading an Iceberg table (`pl.scan_iceberg`, Lab 3.1) |
+# | **It doesn't** | store tables or run SQL for other users (that's a database: DuckDB, a warehouse) · scale past one machine (Spark, Session 4.2) · decide your cleaning rules · schedule, ingest or test by itself (Dagster, dlt, Pandera) |
+# | **In this course** | bronze → silver cleaning (Lab 2.4) · Pandera checks on DataFrames (Lab 3.3) · reading an Iceberg table (`pl.scan_iceberg`, Lab 4.1) |
 # | **As a service** | none as such: Polars runs inside your job, and Polars Cloud runs Polars queries remotely. The same DataFrame code at cluster scale is Spark's DataFrame API (Databricks, EMR, Dataproc) |
 #
 # **Which engine?** It follows the workload, not a gigabyte threshold. On one machine, Polars and DuckDB give the same
-# answer (Lab 2.1 checks it), so the choice is mostly the language your team writes. A larger dataset doesn't by
+# answer (Lab 2.4 checks it), so the choice is mostly the language your team writes. A larger dataset doesn't by
 # itself need a cluster: measure memory, disk spill and the plan first.
 #
 # **Cheat sheet**
@@ -623,8 +625,8 @@ U.check((basket_by_city["avg_basket"] - sql_answer["avg_basket"]).abs().max() < 
 # 4. Which join finds the orders whose customer was erased, and why would an inner join hide them?
 # 5. What does `.explain()` show that `.collect()` doesn't, and what are projection and predicate pushdown?
 #
-# Next: [Lab 2.1 · Bronze to silver](../D2_1_bronze_to_silver.ipynb). It parses three timestamp formats with `.str` and
-# `.dt`, keeps one copy per event with `unique`, and writes silver Parquet with `sink_parquet`. Docs:
+# Next: [Lab 2.4 · Bronze to silver](../D2_4_bronze_to_silver.ipynb). It parses three timestamp formats with `.str` and
+# `.dt`, keeps one copy per event with `unique`, and writes silver Parquet. Docs:
 # [user guide](https://docs.pola.rs/user-guide/) ·
 # [expressions and contexts](https://docs.pola.rs/user-guide/concepts/expressions-and-contexts/) ·
 # [lazy API](https://docs.pola.rs/user-guide/lazy/) ·

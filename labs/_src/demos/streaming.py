@@ -1,8 +1,9 @@
 # %% [markdown]
-# # Demo 3.3 · Streaming ideas, made visible
+# # Streaming ideas, made visible
 #
-# Day 3 · Session 3 · instructor walkthrough, about 15 minutes. **No exercises:** we run every cell together and look at
-# the courier events. You practise in **Lab 3.3** right after.
+# Optional, self-paced: goes deeper than Session 4.3.
+#
+# **No exercises:** run every cell and look at the courier events. You practise in **Lab 4.3**.
 #
 # Kafka and Flink are big systems, but the ideas underneath are small enough to print. Here we look at them on a
 # handful of real Qafila courier events:
@@ -15,7 +16,7 @@
 # 6. Watermarks: when is a window finished?
 # 7. The same ideas in a real engine
 #
-# 🤔 marks a question to ask the room **before** running the cell.
+# 🤔 asks you to predict **before** you run the cell.
 
 # %%
 import os, sys, subprocess
@@ -154,7 +155,7 @@ dupes = len(events) - len({e["event_id"] for e in events})
 print(f"{dupes} events arrived twice from the producer side (phones retrying), before any crash")
 
 # %% [markdown]
-# Lab 3.3 makes the consumer idempotent and gets the exact counts despite both problems.
+# Lab 4.3 makes the consumer idempotent and gets the exact counts despite both problems.
 #
 # ## 4 · Two clocks: event time vs. processing time
 #
@@ -293,7 +294,7 @@ V.watermark(stream, [timedelta(minutes=2), timedelta(minutes=30)])
 #       .toTable("lake.silver.deliveries_15m"))
 # ```
 #
-# ## Recap → Lab 3.3
+# ## Recap → Lab 4.3
 #
 # | We saw | Because |
 # |---|---|
@@ -303,5 +304,5 @@ V.watermark(stream, [timedelta(minutes=2), timedelta(minutes=30)])
 # | some events arrive ~50 min late | event time ≠ processing time |
 # | the late delivery was dropped | the watermark had passed its window's end |
 #
-# **Lab 3.3** builds the log and consumer on the full week, makes counting idempotent, writes the timestamp parser, and
-# measures the watermark trade-off from 0 to 60 minutes of allowed lateness.
+# **Lab 4.3** builds the log and consumer on the full week, makes counting idempotent, and measures the watermark
+# trade-off.

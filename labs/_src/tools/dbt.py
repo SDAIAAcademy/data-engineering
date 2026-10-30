@@ -1,9 +1,11 @@
 # %% [markdown]
 # # dbt, from an empty folder to a tested report
 #
-# Day 2, before Lab 2.3 · CPU only. Finance asks how much delivered product revenue came from each store city. You
+# Optional, self-paced: goes deeper than Sessions 3.2 and 3.3.
+#
+# CPU only. Finance asks how much delivered product revenue came from each store city. You
 # build that report as a small dbt project, file by file, and read every piece of SQL dbt generates, so nothing in
-# Lab 2.3's big project is magic. §9, the tests, opens session D2_4.
+# Lab 3.2's big project is magic. §9, the tests, goes with Session 3.3.
 #
 # **The data:** a few invented rows, small enough to check by hand (SAR, without delivery fees).
 #
@@ -19,22 +21,21 @@
 # - [ ] 6 · `ref()` builds a graph, and the graph sets the order
 # - [ ] 7 · Materializations: view, table, incremental; break one on purpose
 # - [ ] 8 · Macros: write an expression once
-# - [ ] 9 · Tests: a build that succeeds is not a correct build (opens D2_4)
+# - [ ] 9 · Tests: a build that succeeds is not a correct build (Session 3.3)
 # - [ ] 10 · Lineage and documentation
 # - [ ] 11 · Summary
 
 # %% [markdown] 🎓
 # 🎓 **Instructor notes** (instructor copy only)
 #
-# - Split over two sessions. **D2_3** = §1–8, 10–11, core ≈ 27': §2 4' · §3 2' · §4 2' · §5 3' · §6 5' · §7 7'
-#   (7a–b; 7c–d ➕) · §8 2' · §10 1' · §11 1'. §1 runs before class. **D2_4 opens with §9** (10': 9a–c; 9d ➕), then
-#   `tools/pandera`. Run the notebook down to §9 before D2_4 (a few minutes). Lab 2.3 §3 applies 7b to the real fact
-#   without re-teaching it.
+# - Split over two sessions. **D3_2** = §1–8, 10–11, core ≈ 27': §2 4' · §3 2' · §4 2' · §5 3' · §6 5' · §7 7'
+#   (7a–b; 7c–d ➕) · §8 2' · §10 1' · §11 1'. §1 runs before class. **D3_3 opens with §9** (10': 9a–c; 9d ➕), then
+#   `tools/pandera`. Run the notebook down to §9 before D3_3 (a few minutes).
 # - §6 writes `stg_stores` and `mart_city_sales` in walked cells: ask the room for the `source()` and `ref()`
 #   arguments before running them. Every later cell needs both models.
 # - In class, run the cells of a ➕ part without stopping on them: later cells may use what they build.
-# - §9's warn / contract / unit-test cells teach the mechanisms Lab 2.4 uses, on different cases: Lab 2.4 writes a
-#   `relationships` test with `severity: warn`, breaks a contract with a type change, and unit-tests mobile numbers.
+# - §9's warn / contract / unit-test cells go further than Lab 3.3, which writes a `relationships` test and chooses
+#   between warn and error. Contracts and unit tests are only here.
 # - Every `dbt(...)` call takes a few seconds in process; a full run of this notebook is a few minutes.
 
 # %%
@@ -96,7 +97,7 @@ V.platform_map(tool="dbt")
 # %% [markdown]
 # ## 1 · Raw data: what dbt does not load
 #
-# This cell plays the **ingestion step** (dlt in Lab 1.3): it loads three tables into the schema `raw`, a namespace
+# This cell plays the **ingestion step** (dlt in Lab 2.2): it loads three tables into the schema `raw`, a namespace
 # inside the DuckDB file. dbt never loads data.
 
 # %%
@@ -239,7 +240,7 @@ V.sql_steps([
 # | descriptions | documentation and lineage, from the same files |
 #
 # dbt is a **compiler and a runner**, not a database: it never stores a row, and it never loads data. The model design
-# (what one row means, which rows count as revenue) is still yours (Lab 2.2).
+# (what one row means, which rows count as revenue) is still yours (Lab 3.1).
 #
 # ## 4 · A project, a profile and its sources
 #
@@ -552,9 +553,9 @@ print("+mart_hardcoded  →", dbt("ls", "--select", "+mart_hardcoded", "--output
 # | `staging` | the `models/staging/` folder |
 #
 # The folders are **layers**: dbt's **silver** and **gold** zones. **Bronze** is the `raw` schema, which dbt only
-# reads. In Lab 2.3's project:
+# reads. In Lab 3.2's project:
 #
-# | Folder | Qafila example (Lab 2.3) | Its job | Zone |
+# | Folder | Qafila example (Lab 3.2) | Its job | Zone |
 # |---|---|---|---|
 # | `staging/` | `stg_orders` | one model per source table: rename, cast, derive the order date; no business logic | silver |
 # | `intermediate/` | `int_payments_per_order` | reshape for reuse: payment attempts → one row per order | silver |
@@ -564,7 +565,7 @@ print("+mart_hardcoded  →", dbt("ls", "--select", "+mart_hardcoded", "--output
 #
 # Careful with the name: `stg_` models are **cleaned**, although a warehouse's "stage" area usually means the landed
 # copy. And the payments become one row per order **before** they meet the orders, so several attempts can't multiply
-# an order's amount (the fan-out of Lab 2.2).
+# an order's amount (the fan-out of Lab 3.1).
 #
 # ## 7 · Materializations: view, table, incremental; break one on purpose
 #
@@ -946,7 +947,7 @@ U.check(statuses["mart_city_sales"] == "success", "...and the report is built")
 # |---|---|---|
 # | **error** | the test fails and `dbt build` skips everything downstream | a duplicated fact key |
 # | **warn** | the failure is recorded, the build continues; someone must follow it up | a new source status, an erased customer |
-# | **quarantine** | a model routes the rejected rows to their own table, with a reason; the rest is published | non-positive quantities (`qrn_order_items`, Lab 2.3) |
+# | **quarantine** | a model routes the rejected rows to their own table, with a reason; the rest is published | non-positive quantities (`qrn_order_items`, in `dbt_qafila/`) |
 #
 # Quarantine is not a test setting: it's a model whose `WHERE` is the opposite of the fact's. Rows in the fact plus
 # rows in quarantine should add up to the source.
@@ -1008,8 +1009,8 @@ write_file("models/marts/mart_city_sales.sql", REPORT)
 dbt("build", "--select", "mart_city_sales")
 
 # %% [markdown]
-# 🔍 Nothing reached the database. Changing a contract is a decision taken with the consumers (a new model version,
-# Day 4), not a quiet edit. A contract checks names and types, not values: a `revenue_sar` of -5 still fits it, which
+# 🔍 Nothing reached the database. Changing a contract is a decision taken with the consumers (a new model version),
+# not a quiet edit. A contract checks names and types, not values: a `revenue_sar` of -5 still fits it, which
 # is why the tests stay.
 #
 # ### 9c · A unit test: check the logic on rows you choose
@@ -1066,11 +1067,11 @@ U.check(city("Jeddah") == 43.65, "macro restored: the report is right again")
 #
 # | Where | Check | Catches | In this course |
 # |---|---|---|---|
-# | a file or DataFrame at the door | Pandera schema | bad values before they are loaded | Lab 2.4 |
-# | the logic of a model | dbt unit test | a wrong rule, on rows you chose | §9c, Lab 2.4 |
-# | the tables just built | dbt data tests | broken keys, nulls, unknown values, orphans | §9, Labs 2.3–2.4 |
-# | the model's interface | dbt contract | renamed or retyped columns | §9b, Lab 2.4 |
-# | production, after release | freshness, volume, Unknown rate | changes nobody tested for | Day 4 |
+# | a file or DataFrame at the door | Pandera schema | bad values before they are loaded | Lab 3.3 |
+# | the logic of a model | dbt unit test | a wrong rule, on rows you chose | §9c |
+# | the tables just built | dbt data tests | broken keys, nulls, unknown values, orphans | §9, Labs 3.2–3.3 |
+# | the model's interface | dbt contract | renamed or retyped columns | §9b |
+# | production, after release | freshness, volume, Unknown rate | changes nobody tested for | Session 3.4 |
 #
 # **Before a change is merged**, CI (continuous integration) builds it in its own schema and runs these checks, only
 # on what the change touches:
@@ -1086,7 +1087,7 @@ U.check(city("Jeddah") == 43.65, "macro restored: the report is right again")
 # ## 10 · Lineage and documentation
 #
 # `dbt docs generate` writes the documentation from the same files. The graph in `target/manifest.json` is also what
-# an orchestrator reads to run dbt model by model (Lab 4.1).
+# an orchestrator reads to run dbt model by model (Lab 3.4).
 
 # %%
 dbt("docs", "generate")
@@ -1104,8 +1105,8 @@ print("Your complete project is in:", PROJ)
 # | | |
 # |---|---|
 # | **It does** | SQL `SELECT`s as a project in Git · the build order from `ref()` / `source()` · views, tables, incremental models · macros · data tests, unit tests, contracts · documentation and lineage (`manifest.json`) |
-# | **It doesn't** | load data (dlt, Lab 1.3) · store or compute anything itself (the warehouse does) · schedule runs (Dagster, Lab 4.1) · design the model for you (Lab 2.2) |
-# | **In this course** | Lab 2.3 builds the Qafila project (`dbt_qafila/`) · Lab 2.4 adds tests, a contract and a unit test · Lab 4.1 runs it from Dagster, one asset per model · Lab 4.2's contracts and freshness |
+# | **It doesn't** | load data (dlt, Lab 2.2) · store or compute anything itself (the warehouse does) · schedule runs (Dagster, Lab 3.4) · design the model for you (Lab 3.1) |
+# | **In this course** | Lab 3.2 builds the Qafila project (`dbt_qafila/`) · Lab 3.3 adds tests and a quarantine · Lab 3.4 runs it from Dagster, one asset per model |
 # | **As a service** | dbt Cloud (the same project with scheduling, an IDE and CI) · SQLMesh / Tobiko Cloud · warehouse-native tools: Dataform (BigQuery), Snowflake Dynamic Tables, Databricks Lakeflow Declarative Pipelines |
 #
 # **Cheat sheet**
@@ -1121,7 +1122,7 @@ print("Your complete project is in:", PROJ)
 # | `dbt run --full-refresh` | rebuilds incremental models from all rows |
 # | `dbt test --select test_type:unit` | only the unit tests |
 # | `dbt docs generate`, `dbt docs serve` | writes / serves the documentation |
-# | `dbt source freshness` | checks when each source last received data (Day 4) |
+# | `dbt source freshness` | checks when each source last received data (Session 3.4) |
 # | `dbt build --target prod` | the same project on the profile's `prod` output |
 # | `{{ source('src', 'table') }}`, `{{ ref('model') }}` | a raw table, a model: the arrows of the graph |
 # | `{{ config(materialized='incremental', unique_key=..., incremental_strategy=...) }}` | per-model settings; strategies: `append`, `delete+insert`, `merge`, `insert_overwrite`, `microbatch` |
@@ -1141,7 +1142,7 @@ print("Your complete project is in:", PROJ)
 #    would you set `severity: warn` instead?
 # 5. A contract, a data test and a unit test: which one catches a renamed column, a duplicated key, a wrong formula?
 #
-# Next: [Lab 2.3 · The Qafila dbt project](../D2_3_dbt_project.ipynb). Docs:
+# Next: [Lab 3.2 · The same star in dbt](../D3_2_dbt_project.ipynb). Docs:
 # [materializations](https://docs.getdbt.com/docs/build/materializations) ·
 # [incremental](https://docs.getdbt.com/docs/build/incremental-models) ·
 # [macros](https://docs.getdbt.com/docs/build/jinja-macros) ·

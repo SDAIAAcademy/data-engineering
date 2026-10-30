@@ -1,11 +1,13 @@
 # %% [markdown]
 # # Iceberg · open table formats, on a lightboard
 #
-# Day 3, before Lab 3.1 · CPU only. Finance reads Qafila's payments from a folder of Parquet files, and the folder
+# Optional, self-paced: goes deeper than Session 4.1.
+#
+# CPU only. Finance reads Qafila's payments from a folder of Parquet files, and the folder
 # breaks as soon as a load dies halfway or one row must change. You watch it break, then build an Iceberg table commit
 # by commit and replay what each commit wrote on disk.
 #
-# **The data:** Qafila's **payments** feed. Lab 3.1 builds the **orders** table the same way.
+# **The data:** Qafila's **payments** feed. Lab 4.1 builds the **orders** table the same way.
 #
 # 🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.
 #
@@ -38,8 +40,8 @@
 #   §9 2' · §10 1'. §8 is ➕.
 # - In class, run the cells of a ➕ part without stopping on them: later cells may use what they build.
 # - Stop at ① on the commit board (§3) and ask "if the job died right here, what would a reader see?".
-# - Lab 3.1 creates the partitioned table, upserts refunds, erases a customer, time-travels per snapshot, evolves the
-#   schema **and the partitioning**, and reads from DuckDB and Polars: don't do those here.
+# - Lab 4.1 catches a folder mid-rewrite, creates the table, walks its metadata, changes rows, time-travels, adds a
+#   column and reads from DuckDB and Polars: don't solve its exercises here.
 
 # %%
 import os, sys, subprocess
@@ -111,7 +113,7 @@ V.lakehouse_history()
 # %% [markdown]
 # ## 1 · A folder of Parquet files is not a table
 #
-# The Day 1 way: one Parquet file of payments per day, and Finance's dashboard globs the folder. A nightly job loads
+# The Session 1.4 way: one Parquet file of payments per day, and Finance's dashboard globs the folder. A nightly job loads
 # four more days and dies after writing two of them.
 #
 # 🤔 What does the dashboard see now? Can it tell that something is missing?
@@ -176,7 +178,7 @@ V.plain_folder(plain, loads=[[f"day={d:02d}" for d in range(1, 5)], [f"day={d:02
 # The table gets a **partition spec**, the rule for grouping rows into files: *source column + transform*. Ours is
 # `day(created_at)`, so each day's payments land in their own files, and Iceberg derives the day itself (we never add
 # a `created_day` column). The spec lives in the metadata, not in folder names, so it can change later without
-# rewriting data (Lab 3.1 does that).
+# rewriting data.
 #
 # 🤔 We create an empty table, partitioned by day. What gets written: data files, metadata, or both?
 
@@ -378,7 +380,7 @@ V.iceberg_history(tbl, notes)
 # %% [markdown]
 # 🔍 Useful for debugging ("what did the table say when the dashboard broke?") and for reproducible training sets for
 # Data science. Bad news for Compliance: under the **right to erasure**, deleted rows live on in old snapshots until
-# you expire them (Lab 3.1 ✱, Lab 4.3).
+# you expire them (Lab 4.1 ✱).
 #
 # A snapshot records **which files** make up the table, not which rows changed. To find the row a delete removed,
 # compare two snapshots:
@@ -467,7 +469,7 @@ pd.Series({
 #    metadata, so when in doubt it fails. Put the partition column in the filter (race 2) and the false conflict goes
 #    away.
 #
-# A failed writer recovers by reloading the table and running the job again (on Day 4 the orchestrator retries for
+# A failed writer recovers by reloading the table and running the job again (an orchestrator, Session 3.4, retries for
 # you):
 
 # %%
@@ -537,8 +539,8 @@ con.sql(f"""
 # | | |
 # |---|---|
 # | **It does** | atomic commits on files (one pointer swap) · snapshots and time travel · row-level deletes and upserts · schema and partition evolution without rewriting data · file skipping from metadata · many engines on one copy |
-# | **It doesn't** | run queries (engines do: DuckDB, Spark, Trino, Snowflake...) · compact files or expire snapshots by itself (maintenance jobs do, Lab 3.1 ✱) · decide who may read what (the catalog does, Day 4) |
-# | **In this course** | Lab 3.1 builds `qafila.orders` · Lab 3.4 commits a stream into Iceberg · Lab 4.3 erases a customer for good |
+# | **It doesn't** | run queries (engines do: DuckDB, Spark, Trino, Snowflake...) · compact files or expire snapshots by itself (maintenance jobs do, Lab 4.1 ✱) · decide who may read what (the catalog does) |
+# | **In this course** | Lab 4.1 builds `qafila.orders` |
 # | **As a service** | AWS S3 Tables / Glue, Databricks Unity Catalog, Snowflake (managed Iceberg tables), BigQuery BigLake tables: the same format, with the catalog and maintenance run for you |
 #
 # **Cheat sheet**
@@ -564,7 +566,6 @@ con.sql(f"""
 # 3. Spark and DuckDB write to the same Iceberg table at the same moment. What happens to each writer?
 # 4. A customer's row is deleted from the table. Is it gone from storage? What else must happen?
 #
-# **Next: [Lab 3.1 · An Iceberg lakehouse](../D3_1_iceberg_lakehouse.ipynb)** does the same on `qafila.orders`: build
-# the table, upsert refunds, erase a customer, evolve the schema **and the partitioning**, and read it from DuckDB and
-# Polars. Docs: [PyIceberg](https://py.iceberg.apache.org/) · [Iceberg](https://iceberg.apache.org/docs/latest/) ·
+# **Next: [Lab 4.1 · A table on a folder: Iceberg](../D4_1_iceberg_lakehouse.ipynb)** does the same on `qafila.orders`:
+# build the table, walk its metadata, change rows, time travel, add a column, and read it from DuckDB and Polars. Docs: [PyIceberg](https://py.iceberg.apache.org/) · [Iceberg](https://iceberg.apache.org/docs/latest/) ·
 # [table spec](https://iceberg.apache.org/spec/).

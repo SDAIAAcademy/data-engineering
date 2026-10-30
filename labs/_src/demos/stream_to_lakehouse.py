@@ -1,10 +1,12 @@
 # %% [markdown]
-# # Demo 3.4 · Streams into the lakehouse, live
+# # Beyond the course · Streams into the lakehouse, live
 #
-# Day 3 · Session 4 · instructor walkthrough, about 12 minutes. **No exercises:** we run every cell together and look at
-# what happens to the table. You practise in **Lab 3.4** right after.
+# Optional, self-paced: goes deeper than Session 4.3.
 #
-# Session 3's courier events now land in an Iceberg table every 30 minutes, the way a Spark or Flink job would write them.
+# **Beyond the course:** no session or lab covers streams into a lakehouse. It combines Session 4.1 (Iceberg) and
+# Session 4.3 (streaming). **No exercises:** run every cell and look at what happens to the table.
+#
+# Session 4.3's courier events now land in an Iceberg table every 30 minutes, the way a Spark or Flink job would write them.
 #
 # 1. Micro-batches and offsets
 # 2. The naive sink: commit the data, then save the offset
@@ -14,7 +16,7 @@
 # 6. Kappa: fix it by replaying the log
 # 7. The same pattern in Spark
 #
-# 🤔 marks a question to ask the room **before** running the cell.
+# 🤔 asks you to predict **before** you run the cell.
 
 # %%
 import os, sys, subprocess
@@ -45,7 +47,7 @@ import pyarrow as pa
 from pyiceberg.transforms import DayTransform
 
 def parse_ts(s: str) -> datetime:
-    """The three event_time formats from Session 3 -> aware UTC datetime."""
+    """The three event_time formats from Session 4.3 -> aware UTC datetime."""
     if s.isdigit():
         return datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc)
     return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -64,7 +66,7 @@ SCHEMA = pa.schema([("event_id", pa.string()), ("order_id", pa.int64()), ("store
 def to_arrow(rows: list[dict]) -> pa.Table:
     return pa.Table.from_pylist([{f: r[f] for f in SCHEMA.names} for r in rows], schema=SCHEMA)
 
-DEMO = U.lab_dir("D3_4_demo", reset=True)
+DEMO = U.lab_dir("demo_stream_to_lakehouse", reset=True)
 catalog = U.get_catalog(DEMO / "lakehouse")
 catalog.create_namespace("bronze")
 
@@ -157,8 +159,8 @@ snap = safe.current_snapshot()
 
 # %% [markdown]
 # On restart, the job reads the offset back from the table's latest snapshot. That's the same idea as Spark's
-# checkpoints tied to Iceberg/Delta commit ids, or Flink's two-phase commit. **Lab 3.4** writes this sink, crashes it,
-# and proves zero duplicates (and also removes the phones' duplicate events).
+# checkpoints tied to Iceberg/Delta commit ids, or Flink's two-phase commit. A real sink would
+# also remove the phones' duplicate events.
 #
 # ## 4 · Streaming makes small files
 #
@@ -179,8 +181,8 @@ files.groupby("day").agg(files=("file_path", "size"), rows=("record_count", "sum
 # a manifest entry and an object-store request; analytics engines like files of 100 MB or more. Shorter triggers mean
 # fresher data **and** more, smaller files.
 #
-# The fix is **compaction**: rewrite each partition's small files into a few large ones, as one more commit. Lab 3.4 does
-# it by hand and measures the scan before and after; in production it's Spark's `rewrite_data_files` or a managed service.
+# The fix is **compaction**: rewrite each partition's small files into a few large ones, as one more commit. In
+# production it's Spark's `rewrite_data_files` or a managed service.
 #
 # ## 5 · The table is a stream too
 #
@@ -194,7 +196,7 @@ snaps.assign(added_records=snaps.summary.map(lambda s: int(dict(s)["added-record
 # %% [markdown]
 # So a downstream job (bronze → silver) doesn't need to rescan the table. It remembers the last snapshot it processed,
 # like a consumer offset, and asks for "rows appended since snapshot X". That's how Flink and Spark stream **from**
-# Iceberg, and how jobs chain through the lakehouse instead of through more Kafka topics. Lab 3.4 does that read.
+# Iceberg, and how jobs chain through the lakehouse instead of through more Kafka topics.
 #
 # ## 6 · Kappa: fix it by replaying the log
 #
@@ -233,7 +235,7 @@ print(f"naive: {rows:,} rows | rebuilt: {len(ids):,} rows, {len(set(ids.to_pylis
 # spark.sql("CALL lake.system.expire_snapshots('bronze.delivery_events')")      # keep storage bounded
 # ```
 #
-# ## Recap → Lab 3.4
+# ## Recap
 #
 # | We saw | Because |
 # |---|---|
@@ -243,5 +245,5 @@ print(f"naive: {rows:,} rows | rebuilt: {len(ids):,} rows, {len(set(ids.to_pylis
 # | `added-records` per snapshot | the table can be read incrementally, like a log |
 # | a clean table from offset 0 | Kappa: replay the retained log with fixed code |
 #
-# **Lab 3.4**: the crash-proof sink with dedupe, compaction with before/after timings, the live SLA query on the table
-# with DuckDB, and incremental reads for the next job.
+# **To try on your own:** a crash-proof sink with dedupe, compaction with before/after timings, a live SLA query on the
+# table with DuckDB, and incremental reads for the next job.

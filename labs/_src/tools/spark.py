@@ -1,7 +1,9 @@
 # %% [markdown]
 # # Spark, live and visual
 #
-# Day 3, before Lab 3.2. DuckDB and Polars ran every lab so far on one machine. This walkthrough shows what changes
+# Optional, self-paced: goes deeper than Session 4.2.
+#
+# DuckDB and Polars ran every lab so far on one machine. This walkthrough shows what changes
 # when the work is spread over a cluster: how Spark splits it, plans it, moves data between machines, and where that
 # goes wrong.
 #
@@ -28,9 +30,8 @@
 #
 # - Start the first Spark cell (§1) while you introduce §0: on Colab it installs Java, about a minute.
 # - Open the Spark UI tab in §1 and keep it on screen; refresh it after each action.
-# - Core ≈ 25': §0 3' · §1 2' · §2 3' · §3 3' · §4 5' · §5 4' · §6 2' · §7 2' · §8 1'. §6 shows skew only: Lab 3.2
-#   does the salting.
-# - Lab 3.2 does pruning, broadcast timing, salting and the small-files count: don't do those here.
+# - Core ≈ 25': §0 3' · §1 2' · §2 3' · §3 3' · §4 5' · §5 4' · §6 2' · §7 2' · §8 1'. §6 shows skew only.
+# - Lab 4.2 has its own exercises on lazy plans, shuffles and the file count: don't solve those here.
 
 # %%
 import os, sys, subprocess
@@ -183,7 +184,7 @@ V.lazy(big_baskets,
 # %% [markdown]
 # 🔍 One action can become several jobs: with adaptive execution, each shuffle stage runs as its own job.
 #
-# `explain()` prints the plan Spark ran. You'll read this text in Lab 3.2 and in the Spark UI's SQL tab.
+# `explain()` prints the plan Spark ran. You'll read this text in Lab 4.2 and in the Spark UI's SQL tab.
 
 # %%
 big_baskets.explain()
@@ -300,7 +301,7 @@ V.skew(skewed, cores=spark.sparkContext.defaultParallelism, n=8)
 # executors don't help: one partition is still one task.
 #
 # Fixes: **AQE** (on by default) splits oversized partitions in sort-merge joins at run time; **salting** spreads one
-# key over several tasks; or pick a better key. Lab 3.2 measures skew on National Day and salts it.
+# key over several tasks; or pick a better key.
 
 # %%
 print("AQE:", spark.conf.get("spark.sql.adaptive.enabled"),
@@ -320,7 +321,7 @@ V.files(out)
 
 # %% [markdown]
 # 🔍 With `partitionBy("day")`, each task writes one file **per folder it has rows for**: 1,000 tasks × 365 days =
-# 365,000 small files. Lab 3.2 counts this and fixes it.
+# 365,000 small files. Lab 4.2 counts the files.
 
 # %%
 spark.stop()
@@ -331,8 +332,8 @@ spark.stop()
 # | | |
 # |---|---|
 # | **It does** | DataFrame and SQL transformations over many machines · reads and writes Parquet, Iceberg and Delta tables · batch and streaming (Structured Streaming) · Python, SQL, Scala and Java on one engine |
-# | **It doesn't** | pay off on data one machine handles (start-up, shuffles and a cluster to run) · store tables itself (a table format does: `df.writeTo("cat.db.orders").append()`) · schedule its jobs (Dagster, Day 4) |
-# | **In this course** | Lab 3.2: one metric three ways, partition pruning, broadcast timing, salting, small files |
+# | **It doesn't** | pay off on data one machine handles (start-up, shuffles and a cluster to run) · store tables itself (a table format does: `df.writeTo("cat.db.orders").append()`) · schedule its jobs (Dagster, Session 3.4) |
+# | **In this course** | Lab 4.2: do you need a cluster, lazy evaluation, one metric in the DataFrame API and SQL, reading the plan, counting the files |
 # | **As a service** | Databricks, AWS EMR and Glue, Google Dataproc, Microsoft Fabric, Azure Synapse: Spark with the cluster run for you |
 #
 # **Cheat sheet**
@@ -358,7 +359,7 @@ spark.stop()
 # 3. A stage's 200 tasks finish in 30 s, but one runs for 40 minutes. What is the likely cause, and two fixes?
 # 4. Why did 6 partitions write 6 files, and what happens with `partitionBy("day")` over a year?
 #
-# Next: [Lab 3.2 · Spark](../D3_2_spark.ipynb). Docs:
+# Next: [Lab 4.2 · Spark](../D4_2_spark.ipynb). Docs:
 # [PySpark](https://spark.apache.org/docs/latest/api/python/index.html) ·
 # [performance tuning and AQE](https://spark.apache.org/docs/latest/sql-performance-tuning.html) ·
 # [the Spark UI](https://spark.apache.org/docs/latest/web-ui.html).

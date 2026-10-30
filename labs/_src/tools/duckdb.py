@@ -1,11 +1,12 @@
 # %% [markdown]
 # # DuckDB, an analytical database in a library
 #
-# Day 1 · Session 1, after the first part of the slides · CPU only. The slides showed why analytics stores data by
-# column. Here you ask Finance's question of the app database and of DuckDB, then learn the engine every lab runs on.
+# Optional, self-paced: goes deeper than Session 1.2.
+#
+# CPU only. Session 1.2 showed why analytics stores data by column. Here you ask Finance's question of the app database and of DuckDB, then learn the engine every lab runs on.
 #
 # **The data:** a large copy of Qafila's orders table, built by the setup cell, and a few daily files small enough to
-# check by eye. Lab 1.1 points the same tools at the real sources.
+# check by eye. Labs 1.1 and 1.2 point the same tools at the real sources.
 #
 # 🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.
 #
@@ -25,10 +26,10 @@
 #   takes a few seconds, most of it waiting for SQLite: that wait is the point.
 # - Core ≈ 15': §1 4' · §2 2' · §3 4' (CSV sniffing, the glob trap; JSON and Parquet ➕) · §4 3' (one writer; views
 #   and `ATTACH` ➕) · §5 1' · §7 1'. §6 is ➕.
-# - The slides (`slides/D1_1_storage.html`, part 1) already explained OLTP vs. OLAP and row vs. column storage. §1 is
+# - The slides (`slides/day1.html`, Sessions 1.1 and 1.2) already explained OLTP vs. OLAP and row vs. column storage. §1 is
 #   the proof on a laptop; don't explain the layout again, point back at the boards.
 # - In class, run the cells of a ➕ part without stopping on them: later cells may use what they build.
-# - Lab 1.1 reads the real sources (CSV, JSON lines, SQLite) and profiles them; don't solve its exercises here.
+# - Labs 1.1 and 1.2 read the real sources (CSV, JSON lines, SQLite) and profile them; don't solve their exercises here.
 # - Timings differ per machine and on Colab. The ratio is the point, not the numbers.
 
 # %%
@@ -94,7 +95,7 @@ V.platform_map(tool="duckdb")
 # ## 1 · Finance's question, two databases
 #
 # Finance's question: **revenue per store per day**. The orders live in the app's database, SQLite, a row store built
-# to save one order quickly (OLTP, in the slides). The first try is to ask it directly.
+# to save one order quickly (OLTP, Session 1.1). The first try is to ask it directly.
 
 # %%
 QUESTION = """
@@ -138,7 +139,7 @@ V.bars({"way": list(times), "seconds": list(times.values())}, "way", ["seconds"]
 # %% [markdown]
 # 🔍 The same answer in a fraction of the time, from a file several times smaller. The rows didn't change, only how
 # they are stored: DuckDB read the four columns the question names and skipped `order_id` and the notes, and
-# similar values side by side compressed well (the slides' column board).
+# similar values side by side compressed well (Session 1.2).
 #
 # Two more things make it fast. It runs **in your Python process**, like SQLite: no server, nothing to install but the
 # package. And it works on batches of about 2,048 values at a time, on every CPU core.
@@ -285,7 +286,7 @@ con.sql(f"""
     FROM '{F}/order_details.jsonl'""")
 
 # %% [markdown]
-# ➕ **Parquet** is a column store in a file, the format of the slides' second part and Lab 1.2. `COPY ... TO` writes
+# ➕ **Parquet** is a column store in a file, the format of Session 1.4 and Lab 1.4. `COPY ... TO` writes
 # any query to a file. Reading it back needs no options, because the types are stored in the file.
 
 # %%
@@ -301,7 +302,7 @@ con.sql(f"SELECT column_name, column_type FROM (DESCRIBE FROM '{F}/orders.parque
 # | Parquet | `FROM 'x.parquet'`, `read_parquet(...)` | types stored in the file |
 # | Many files | `'orders_*.csv'`, `['a.csv', 'b.csv']` | `union_by_name`, `filename` |
 # | HTTP, S3, GCS, Azure | `FROM 'https://…'`, `'s3://…'` | the `httpfs` extension, loaded on first use |
-# | Write | `COPY (query) TO 'x.parquet'` | also CSV, JSON; `PARTITION_BY` in Lab 1.2 |
+# | Write | `COPY (query) TO 'x.parquet'` | also CSV, JSON; `PARTITION_BY` in Lab 1.4 |
 
 # %% [markdown] 🎓
 # 🎓 Lab 1.1 meets the real `free`: week 38's supplier prices are `VARCHAR` because of decimal commas. Let the room
@@ -327,7 +328,7 @@ wh.sql("SELECT (SELECT count(*) FROM orders) AS in_table, (SELECT count(*) FROM 
 wh.sql("SELECT (SELECT count(*) FROM orders) AS in_table, (SELECT count(*) FROM orders_live) AS in_view")
 
 # %% [markdown]
-# 🔍 The table is fast and doesn't change under you; the view always shows the files as they are now. dbt (Day 2)
+# 🔍 The table is fast and doesn't change under you; the view always shows the files as they are now. dbt (Session 3.2)
 # makes the same choice per model.
 #
 # ➕ **Other databases** can be attached and joined with yours, with no export and no import. That is how §1 copied
@@ -364,12 +365,12 @@ other = subprocess.run([sys.executable, "-c", READER], capture_output=True, text
 print("❌" if other.returncode else "✅", other.stdout.strip() or first_error(other.stderr))
 
 # %% [markdown]
-# 🔍 This is the most common DuckDB error in class: a notebook keeps the warehouse open, and `dbt run` or Dagster
+# 🔍 This is the most common DuckDB error in this course: a notebook keeps the warehouse open, and `dbt run` or Dagster
 # fails with "Could not set lock on file" ("being used by another process" on Windows). To avoid it:
 # - open, query, close: `with duckdb.connect(path) as con:`;
 # - readers use `read_only=True` (many read-only processes can share a file);
 # - when many people or services must write, use a server (PostgreSQL, MotherDuck, a warehouse) or a table format
-#   like Iceberg (Day 3).
+#   like Iceberg (Session 4.1).
 
 # %% [markdown]
 # ## 5 · Results into Python
@@ -390,7 +391,7 @@ print("top store:", revenue.fetchall()[0][0])
 # |---|---|
 # | `.fetchall()` | a list of rows, each a tuple: `[0][0]` is the first value of the first row |
 # | `.df()` | a table Python can chart or save (a pandas DataFrame; the labs only display it) |
-# | `.pl()` | a Polars DataFrame (Day 2) |
+# | `.pl()` | a Polars DataFrame (Session 2.4) |
 # | `.columns` | the column names |
 #
 # ➕ **Parameters.** A value from Python (a date, a store picked in a dashboard) goes in as a `?`, not pasted into the
@@ -430,8 +431,8 @@ con.sql("SELECT column_name, column_type, min, max, approx_unique, null_percenta
 # | `FROM t` / `FROM t SELECT ...` | `SELECT * FROM t` / FROM written first |
 # | `SELECT * EXCLUDE (a)` | all columns but some |
 # | `GROUP BY ALL`, `ORDER BY ALL` | no need to repeat the columns |
-# | `DESCRIBE`, `SUMMARIZE` | the types / a profile of every column (Lab 1.1) |
-# | `QUALIFY` | filter on a window function (`00_sql_windows`, Lab 1.4) |
+# | `DESCRIBE`, `SUMMARIZE` | the types / a profile of every column (Lab 1.2) |
+# | `QUALIFY` | filter on a window function (`tools/sql_windows`, Lab 1.3) |
 
 # %% [markdown]
 # ## 7 · Summary
@@ -439,8 +440,8 @@ con.sql("SELECT column_name, column_type, min, max, approx_unique, null_percenta
 # | | |
 # |---|---|
 # | **It does** | SQL analytics on one machine, fast · files in place (CSV, JSON, Parquet, Iceberg) · attach SQLite / PostgreSQL · results into Python · data larger than memory, by spilling to disk |
-# | **It doesn't** | serve an app (many small writes from many users: that's PostgreSQL) · let several processes write one file · scale past one machine (Spark, Day 3) · ingest, schedule or test by itself (dlt, Dagster, dbt) |
-# | **In this course** | the dlt destination (Lab 1.3) · the engine under dbt (Lab 2.3) · the warehouse `warehouse/qafila.duckdb` · a reader of Iceberg tables (Lab 3.1) |
+# | **It doesn't** | serve an app (many small writes from many users: that's PostgreSQL) · let several processes write one file · scale past one machine (Spark, Session 4.2) · ingest, schedule or test by itself (dlt, Dagster, dbt) |
+# | **In this course** | the dlt destination (Lab 2.2) · the engine under dbt (Lab 3.2) · the warehouse `warehouse/qafila.duckdb` · a reader of Iceberg tables (Lab 4.1) |
 # | **As a service** | MotherDuck; Snowflake, BigQuery, Redshift and Databricks SQL offer the same columnar SQL at company scale |
 #
 # **Cheat sheet**
@@ -464,7 +465,7 @@ con.sql("SELECT column_name, column_type, min, max, approx_unique, null_percenta
 # 3. Daily files keep arriving: when is a table right, and when a view?
 # 4. `dbt run` fails with "could not set lock on file". What is holding it, and what are two ways to avoid it?
 #
-# Next: [Lab 1.1 · Platform tour with DuckDB](../D1_1_platform_tour.ipynb). Docs:
+# Next: [Lab 1.2 · Analytical SQL with DuckDB](../D1_2_duckdb_sql.ipynb). Docs:
 # [Python API](https://duckdb.org/docs/stable/clients/python/overview) ·
 # [CSV import](https://duckdb.org/docs/stable/data/csv/overview) ·
 # [friendly SQL](https://duckdb.org/docs/stable/sql/dialect/friendly_sql) ·

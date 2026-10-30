@@ -1,7 +1,9 @@
 # %% [markdown]
 # # Pandera, checks at the door
 #
-# Day 2, before Lab 2.4, after `tools/dbt` §9 (dbt tests) · CPU only. A payment provider sends Qafila a day of
+# Optional, self-paced: goes deeper than Session 3.3.
+#
+# CPU only. Reads best after `tools/dbt` §9 (dbt tests). A payment provider sends Qafila a day of
 # payments. You check it with hand-written asserts, watch what they miss, then write the same rules once as a
 # **Pandera schema**: every problem at once, row by row, and the bad rows set aside while the good ones go on.
 #
@@ -25,12 +27,12 @@
 # %% [markdown] 🎓
 # 🎓 **Instructor notes** (instructor copy only)
 #
-# - D2_4 opens with `tools/dbt` §9 (10'), then this walkthrough. Core ≈ 16': §1 2' · §2 1' · §3 1' · §4 2' · §5 3' ·
+# - D3_3 opens with `tools/dbt` §9 (10'), then this walkthrough. Core ≈ 16': §1 2' · §2 1' · §3 1' · §4 2' · §5 3' ·
 #   §6 2' · §7 2' · §8 2' · §10 1'. §9 is ➕. §8 links the two halves of the session: the same rules, at the door
 #   (Pandera) and in the warehouse (dbt).
 # - §5 to §7 each build what the next one uses (`Payment`, `failures2`, `clean`): run them in order.
 # - In class, run the cells of a ➕ section without stopping on them: later cells may use what they build.
-# - Lab 2.4 task 5 asks for the `SupplierPrice` model and gives the quarantine code: here the same mechanism runs on
+# - Lab 3.3 task 4 asks for the `SupplierPrice` model and task 5 quarantines the bad rows: here the same mechanism runs on
 #   payments, so don't write the supplier schema in class.
 # - Expect "why not Great Expectations / Soda?": same job (declared expectations, a report). Pandera is a library that
 #   lives in the pipeline's Python, next to the DataFrame; the others add their own config, stores and reports.
@@ -191,7 +193,7 @@ except pa.errors.SchemaError as e:
     print("❌", str(e).splitlines()[0])
 
 # %% [markdown]
-# 🔍 Pandera doesn't guess: a `String` column is not an `int` column. Either parse the file yourself (Lab 2.4 must,
+# 🔍 Pandera doesn't guess: a `String` column is not an `int` column. Either parse the file yourself (Lab 3.3 must,
 # because its supplier writes `9,49`), or ask Pandera to **coerce** each column to the declared type.
 
 # %%
@@ -275,7 +277,7 @@ except pa.errors.SchemaError as e:
 
 # %% [markdown] 🎓
 # 🎓 This one bites in real pipelines: a lazy Polars chain validated "successfully" for months. Ask the room where in
-# Lab 2.1's lazy chain a check would have to go (answer: after `collect()`, or on the written file).
+# Lab 2.4's lazy chain a check would have to go (answer: after `collect()`, or on the written file).
 
 # %% [markdown]
 # ## 6 · Your own checks: one column, or the whole row
@@ -347,12 +349,12 @@ print("written:", sorted(p.name for p in OUT.iterdir()))
 
 # %% [markdown]
 # 🔍 Both copies of 9003 went to quarantine: `unique` flags every copy, because Pandera can't know which one is right.
-# If "keep the first" is the rule, deduplicate **before** validating and say so in the code. Lab 2.4 runs this same
+# If "keep the first" is the rule, deduplicate **before** validating and say so in the code. Lab 3.3 runs this same
 # split on the supplier price files.
 
 # %% [markdown] 🎓
-# 🎓 Ask: "who reads `payments_quarantine.csv`?" If nobody owns it, quarantine is a slow way to lose data. Day 4's
-# observability session counts quarantined rows as one of the signals to alert on.
+# 🎓 Ask: "who reads `payments_quarantine.csv`?" If nobody owns it, quarantine is a slow way to lose data. Session 3.4's
+# freshness and volume checks are the same habit: count quarantined rows too, and alert on them.
 
 # %% [markdown]
 # ## 8 · Pandera and dbt tests: where each rule belongs
@@ -378,7 +380,7 @@ print("written:", sorted(p.name for p in OUT.iterdir()))
 # | **Best for** | data you **receive**: files, API batches, uploads | data you **build**: models, joins, aggregates |
 #
 # Neither replaces the other. Check what arrives at the door, test what you build inside, and write down with the
-# producer what they promise to send (a **data contract**, Lab 4.2).
+# producer what they promise to send (a **data contract**).
 #
 # Inside the pipeline, Pandera can also guard a function: `@pa.check_types` validates every argument and return value
 # annotated with a schema, so unchecked data can't get in.
@@ -457,8 +459,8 @@ print("wallet payments sent since then without one:",
 # | | |
 # |---|---|
 # | **It does** | types and nulls · built-in and custom checks, per column or per row · every failure at once, with row numbers · `@check_types` on functions · pandas, Polars and PySpark DataFrames |
-# | **It doesn't** | test the tables you build in the warehouse (dbt tests, Lab 2.4) · watch data over time: freshness, volume, drift (observability, Lab 4.2) · agree the rules with the producer (data contracts, Lab 4.2) |
-# | **In this course** | Lab 2.4 validates the supplier price files and quarantines the bad rows · it can run inside a Dagster asset, before the data is written |
+# | **It doesn't** | test the tables you build in the warehouse (dbt tests, Lab 3.3) · watch data over time: freshness, volume, drift (Lab 3.4 adds a volume check) · agree the rules with the producer (a data contract does) |
+# | **In this course** | Lab 3.3 validates the supplier price files and quarantines the bad rows · it can run inside a Dagster asset, before the data is written |
 # | **As a service** | Pandera is a library, not a service. The same job, managed: Databricks expectations (DLT), Snowflake data metric functions, Monte Carlo, Bigeye |
 #
 # **Cheat sheet**
@@ -486,7 +488,7 @@ print("wallet payments sent since then without one:",
 # 4. One check fails on 3 rows of a file; another fails on thousands. Reject the file, quarantine the rows, or load it
 #    all and warn? Is the data wrong, or the rule? Who decides?
 #
-# Next: [Lab 2.4 · Make it trustworthy](../D2_4_data_quality.ipynb). Docs:
+# Next: [Lab 3.3 · Tests and quarantine](../D3_3_data_quality.ipynb). Docs:
 # [Polars integration](https://pandera.readthedocs.io/en/stable/polars.html) ·
 # [DataFrame models](https://pandera.readthedocs.io/en/stable/dataframe_models.html) ·
 # [checks](https://pandera.readthedocs.io/en/stable/checks.html) ·

@@ -1,13 +1,15 @@
 # %% [markdown]
 # # Dagster, assets on a schedule
 #
-# Day 4, before Lab 4.1 · CPU only. Every lab so far ran its steps by hand. In production a nightly script runs them,
+# Optional, self-paced: goes deeper than Session 3.4.
+#
+# CPU only. Every lab so far ran its steps by hand. In production a nightly script runs them,
 # until it fails halfway, runs twice or lets a bad file through. You'll write that script, watch it break, then
 # declare the same pipeline as **Dagster assets**: the tables you want, what each is built from, and the checks it
 # must pass.
 #
 # **The data:** three stores and one orders file per day from the stores app, invented and small enough to check by
-# eye. Lab 4.1 orchestrates the real warehouse.
+# eye. Lab 3.4 orchestrates the real warehouse.
 #
 # 🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.
 #
@@ -30,11 +32,11 @@
 # - Core ≈ 27': §1 3' · §2 2' · §3 2' · §4 4' · §5 3' (the hand edit ➕) · §7 4' (the append re-run ➕) · §8 4' ·
 #   §9 1' (the schedule; the sensor and retries ➕) · §10 3' · §11 1'. §6 is ➕.
 # - Sections 1–4 and 8 carry the session: the script breaking, the graph, selection, and a blocking check. §10
-#   bridges to Lab 4.1, whose task 2 puts the real dbt project in the graph.
+#   bridges to Lab 3.4, whose task 2 puts the real dbt project in the graph.
 # - In class, run the cells of a ➕ part without stopping on them: later cells may use what they build (the
 #   summary's `Definitions` uses §6's resource and §9's sensor).
-# - Don't write Lab 4.1's code here: its exercises are the delete-then-insert partition, the duplicate-events check
-#   and the supplier-file sensor with `run_key`. This notebook uses an upsert, a negative-amount check and a cursor.
+# - Don't write Lab 3.4's code here: its exercises are the ingestion assets, a blocking check and a volume check. This
+#   notebook uses invented data, a negative-amount check, partitions and a sensor.
 # - Expect "Airflow?": the most deployed orchestrator. Airflow 3 added assets too, but its unit is still the task;
 #   in Dagster the unit is the asset. The ideas here (dependencies, partitions, idempotency, checks) transfer.
 # - Everything runs in-process with `dg.materialize`: no server. If there's time, show `dagster dev` on the capstone
@@ -573,7 +575,7 @@ sql("SELECT * FROM city_report WHERE day = '2026-09-16'")
 
 # %% [markdown] 🎓
 # 🎓 Ask: "the check is blocking, the data is wrong, the CEO's dashboard is due at 08:00. Who gets woken, and what do
-# they see?" That's Day 4's next session: alerts, owners, and what the dashboard says when its data is late.
+# they see?" The check alone doesn't answer that: someone must own the alert and decide what the dashboard says when its data is late.
 
 # %% [markdown]
 # ## 9 · When runs start: schedules, sensors, retries
@@ -658,7 +660,7 @@ V.asset_run([payments_page], result)
 # %% [markdown]
 # ## 10 · dbt in the graph
 #
-# Day 2's transformations are dbt models, and dbt has its own graph. `dagster-dbt` reads dbt's `manifest.json` and
+# Session 3.2's transformations are dbt models, and dbt has its own graph. `dagster-dbt` reads dbt's `manifest.json` and
 # makes **every model an asset** and **every dbt test an asset check**. A dbt source becomes a dependency on the
 # asset with the same key, so the Python assets above and the SQL models join into one graph.
 #
@@ -728,7 +730,7 @@ V.asset_run(WITH_DBT, result)
 sql("SELECT * FROM marts.fct_city_sales ORDER BY day, city")
 
 # %% [markdown]
-# The real Qafila dbt project from Lab 2.3 is read the same way. Lab 4.1 puts it in a graph with the courier events
+# The real Qafila dbt project from Lab 3.2 is read the same way. Lab 3.4 puts it in a graph with the courier events
 # loader.
 
 # %%
@@ -757,7 +759,7 @@ V.asset_run([qafila_dbt])
 # |---|---|
 # | **It does** | a graph of assets from the code · runs a selection in order · records every materialization with metadata · resources for dev and prod · partitions and backfills · asset checks, blocking or not · schedules, sensors, retries · dbt models and tests in the same graph · a UI for all of it |
 # | **It doesn't** | move or transform data itself (your SQL, dlt, dbt, Polars do) · make an asset idempotent (you do, §7) · know about changes made outside it (§5) |
-# | **In this course** | Lab 4.1 orchestrates the real warehouse: a loader and the Qafila dbt project in one graph, a partitioned backfill, a blocking check, a schedule and a sensor · the capstone's `pipeline.py`, one code location from the sources to the gold table |
+# | **In this course** | Lab 3.4 orchestrates the real warehouse: a loader and the Qafila dbt project in one graph, a blocking check and a schedule · the capstone's `pipeline.py`, one code location from the sources to the gold table |
 # | **As a service** | Dagster+ · Airflow as a service: Astronomer, Amazon MWAA, Google Cloud Composer · built into platforms: Databricks Workflows, Snowflake tasks, dbt platform jobs, Fabric pipelines |
 #
 # **Cheat sheet**
@@ -788,7 +790,7 @@ V.asset_run([qafila_dbt])
 # 4. The supplier files arrive "sometime on Monday". Schedule or sensor? And what makes the sensor safe to tick every
 #    30 seconds?
 #
-# Next: [Lab 4.1 · Orchestrating Qafila with Dagster](../D4_1_orchestration_dagster.ipynb). Docs:
+# Next: [Lab 3.4 · Orchestrating Qafila with Dagster](../D3_4_orchestration_dagster.ipynb). Docs:
 # [assets](https://docs.dagster.io/guides/build/assets) ·
 # [partitions](https://docs.dagster.io/guides/build/partitions-and-backfills) ·
 # [asset checks](https://docs.dagster.io/guides/test/asset-checks) ·

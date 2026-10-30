@@ -1,12 +1,14 @@
 # %% [markdown]
 # # dlt, from a hand-written loader to an incremental pipeline
 #
-# Day 1, before Lab 1.3 · CPU only. Finance needs Qafila's payments in the warehouse every day, refunds included. You
+# Optional, self-paced: goes deeper than Session 2.2.
+#
+# CPU only. Finance needs Qafila's payments in the warehouse every day, refunds included. You
 # load them with a short script, watch it go wrong in four ways, then let dlt do the same job and read every file and
-# table it produces, so nothing in Lab 1.3 is magic.
+# table it produces, so nothing in Lab 2.2 is magic.
 #
 # **The data:** a few invented payments (SAR), sent by a payment provider day by day, small enough to check by eye.
-# Lab 1.3 does the same with the real provider API and the app database.
+# Lab 2.2 does the same with the real provider API and the app database.
 #
 # 🤔 asks you to predict before you run a cell · 🔍 says what the output means · ➕ sections are for your own pace.
 #
@@ -29,7 +31,7 @@
 #   variant and contracts ➕) · §9 2'. §6 and §8 are ➕. Sections 1–5 carry the session: the pain, the three steps,
 #   dispositions, the cursor in state.
 # - In class, run the cells of a ➕ part without stopping on them: later cells may use what they build.
-#   Lab 1.3 repeats each of them on the real API, so don't solve the lab's exercises here.
+#   Lab 2.2 repeats each of them on the real API, so don't solve the lab's exercises here.
 # - Ask every 🤔 question out loud and wait for two or three answers before running the cell.
 # - Expect "why not Airbyte / Fivetran?": same jobs (pagination, state, schema, load log), as a hosted service with
 #   ready-made connectors. dlt is a library: the pipeline is Python you can read, test and run anywhere.
@@ -345,7 +347,7 @@ sql("SELECT store_id, city FROM raw.stores ORDER BY store_id")
 # %% [markdown]
 # 🔍 With `merge`, `DMM-01` would stay forever: a merge only touches the keys it receives, so a row that disappears
 # from the source never disappears from the table. Seeing **deletes** needs either the whole table (`replace`) or a
-# change feed that says "deleted" (CDC, Lab 1.4).
+# change feed that says "deleted" (CDC, Lab 2.3).
 
 # %% [markdown]
 # ## 5 · Incremental loading: a cursor kept in state
@@ -405,7 +407,7 @@ sql("SELECT payment_id, status, updated_at, _dlt_load_id FROM raw.payments ORDER
 sql("SELECT version, pipeline_name, created_at, _dlt_load_id FROM raw._dlt_pipeline_state ORDER BY version")
 
 # %% [markdown] 🎓
-# 🎓 This is the answer to the cursor-in-a-file problem in §1. Lab 1.3's first checkpoint question asks it again.
+# 🎓 This is the answer to the cursor-in-a-file problem in §1. Lab 2.2's first checkpoint question asks it again.
 
 # %% [markdown]
 # ## 6 · Break it on purpose: a late record slips past the cursor
@@ -501,13 +503,13 @@ _ = pipe.abort_packages()   # throw away the package that failed, or the next ru
 # week 38's `"9,49"` the same way.
 #
 # Strict or tolerant is a choice per table. Bronze usually **tolerates**: new fields land, so nothing is lost, and
-# checks downstream catch the rest (Lab 2.4). Strict stops the pipeline and needs someone to answer the alert.
+# checks downstream catch the rest (Lab 3.3). Strict stops the pipeline and needs someone to answer the alert.
 
 # %% [markdown]
 # ## 8 · From Python lists to a real API
 #
 # ➕ The real provider is an HTTP API: pages of 500 records, a cursor parameter `updated_since`, and a **429 Too Many
-# Requests** when you call too fast. `U.PaymentsAPI` is a local copy of it, the one Lab 1.3 uses. dlt's `RESTClient`
+# Requests** when you call too fast. `U.PaymentsAPI` is a local copy of it, the one Labs 2.1 and 2.2 use. dlt's `RESTClient`
 # follows the pages and retries the 429s:
 
 # %%
@@ -523,8 +525,8 @@ api.stop()
 
 # %% [markdown]
 # 🔍 `JSONLinkPaginator(next_url_path="next")` reads the next page's URL from each response, and `data_selector` says
-# where the records are. The 429s were retried with backoff, without a line of our code. In Lab 1.3 you first write
-# that loop yourself, then put this client inside an incremental resource.
+# where the records are. The 429s were retried with backoff, without a line of our code. In Lab 2.1 you write
+# that loop yourself; Lab 2.2 puts this client inside an incremental resource.
 
 # %% [markdown]
 # ## 9 · Summary
@@ -532,8 +534,8 @@ api.stop()
 # | | |
 # |---|---|
 # | **It does** | paging and retries · write dispositions · incremental cursors with state in the destination · schema inference, evolution and contracts · load ids and a load log |
-# | **It doesn't** | see rows deleted at the source (CDC, Lab 1.4) · clean or model data (Polars, dbt: Day 2) · decide when to run (Dagster, Lab 4.1) |
-# | **In this course** | Lab 1.3 loads the payments API and the app database into a DuckDB `raw` schema, the bronze zone |
+# | **It doesn't** | see rows deleted at the source (CDC, Lab 2.3) · clean or model data (Polars, Session 2.4; dbt, Session 3.2) · decide when to run (Dagster, Lab 3.4) |
+# | **In this course** | Lab 2.2 loads the payments API and the app database into a DuckDB `raw` schema, the bronze zone |
 # | **As a service** | Fivetran, Airbyte, AWS Glue, Azure Data Factory: the same jobs, hosted, with ready-made connectors |
 #
 # **Cheat sheet**
@@ -562,7 +564,7 @@ api.stop()
 # 3. Where does dlt keep the cursor, and why there? What does a lag of one hour fix, and what does it still miss?
 # 4. Week 38's `"9,49"`: is the variant column a feature or a trap? Who should find out, and when?
 #
-# Next: [Lab 1.3 · Ingest Qafila with dlt](../D1_3_ingestion_dlt.ipynb). Docs:
+# Next: [Lab 2.2 · Ingestion with dlt](../D2_2_dlt_pipeline.ipynb). Docs:
 # [pipeline](https://dlthub.com/docs/general-usage/pipeline) ·
 # [write dispositions](https://dlthub.com/docs/general-usage/incremental-loading) ·
 # [incremental cursors](https://dlthub.com/docs/general-usage/incremental/cursor) ·

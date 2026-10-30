@@ -1,7 +1,9 @@
 # %% [markdown]
 # # SQL window functions, from first principles
 #
-# Before Day 1 · self-paced · about 60 min. Labs 1.4, 2.1, 3.4 and the capstone lean on window functions: remove
+# Optional, self-paced: goes with Session 1.3 and Lab 1.3.
+#
+# About 60 min. Lab 2.3 and the capstone lean on window functions: remove
 # duplicate events, keep the latest event per key, find out from when to when something was true. This walkthrough
 # builds them up from nothing, on tables small enough to check by eye.
 #
@@ -493,10 +495,10 @@ no_dedup[no_dedup.customer_id == 101]
 
 # %% [markdown]
 # 🔍 Two Jeddah rows: the first is valid from 08:00 **to** 08:00, a zero-length period that double-counts in some joins
-# and breaks uniqueness tests (Day 2).
+# and breaks uniqueness tests (Session 3.3).
 #
-# This history table has a name: Day 1's last session calls it **SCD Type 2** (a *slowly changing dimension* that keeps
-# every period) and builds it for every Qafila customer in Lab 1.4, with the pieces you just used: dedup by `lsn`, latest
+# This history table has a name: Session 2.3 calls it **SCD Type 2** (a *slowly changing dimension* that keeps
+# every period) and builds it for every Qafila customer in Lab 2.3, with the pieces you just used: dedup by `lsn`, latest
 # per key with `QUALIFY`, periods with `lead`, deletes dropped after the window, out-of-order detection with a frame.
 #
 # ## 8 · The same ideas on real data: courier events
@@ -586,7 +588,7 @@ print(n_wrong, "orders get the wrong status when ordered by arrival")
 # |---|---|
 # | **It does** | an aggregate or a neighbour's value next to every row, without collapsing rows or a self-join · rank, dedupe and keep the latest per key · running totals and "everything before me" |
 # | **It doesn't** | filter in `WHERE` (windows run after it: use `QUALIFY` or a subquery) · break ties for you (`row_number` on a tie is arbitrary) · see other partitions |
-# | **In this course** | dedup, latest state and city history (SCD Type 2) from the customer edits (Lab 1.4) · Polars' `.over()` (Lab 2.1) · latest state per key in streaming (Lab 3.4) |
+# | **In this course** | Lab 1.3 practises them · dedup, latest state and city history (SCD Type 2) from the customer edits (Lab 2.3) |
 # | **In other engines** | the same `OVER (...)` in PostgreSQL, Snowflake, BigQuery, Spark SQL and Databricks; `QUALIFY` everywhere except PostgreSQL |
 #
 # **Cheat sheet**
@@ -611,7 +613,7 @@ print(n_wrong, "orders get the wrong status when ordered by arrival")
 # 3. Why must the delete rows be removed **after** `lead`, and which clause does that?
 # 4. Your history query runs twice on the same edits. Why is the result identical, and which line makes it so?
 #
-# Next: Day 1's last session, change data capture and SCD Type 2, and its [Lab 1.4](D1_4_cdc_merge_scd.ipynb). Docs:
+# Next: [Lab 1.3](../D1_3_sql_windows.ipynb) practises these on Qafila's data; Session 2.3, change data capture and SCD Type 2, and its [Lab 2.3](../D2_3_cdc_merge_scd.ipynb), build on them. Docs:
 # [window functions](https://duckdb.org/docs/stable/sql/functions/window_functions) ·
 # [`QUALIFY`](https://duckdb.org/docs/stable/sql/query_syntax/qualify) ·
 # [`WINDOW`](https://duckdb.org/docs/stable/sql/query_syntax/window).
